@@ -1,0 +1,9 @@
+data/*
+
+!.gitkeep
+
+__marimo__/*
+
+.vscode/
+
+.venv/
