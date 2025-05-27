@@ -99,7 +99,7 @@ def _(pd):
 
 @app.cell
 def _(pd):
-    us_core_cpi = pd.read_csv("data/Consumer Price Index Less Food and Energy.csv")
+    us_core_cpi = pd.read_csv("data/CPI Less Food and Energy.csv")
     us_core_cpi["observation_date"] = pd.to_datetime(us_core_cpi["observation_date"])
     us_core_cpi.head()
     return (us_core_cpi,)
@@ -483,7 +483,7 @@ def create_lag_features_MONTHLY(df_input, inflation_col_name):
     df = df.drop(columns=individual_lag_cols_to_drop)
 
     # # --- Add a constant term for the regression ---
-    # df['constant'] = 1.0
+    df['constant'] = 1.0
 
     return df
 
@@ -552,8 +552,8 @@ def _(sm):
 
         print("--- Prior Parameters Estimated from Pre-2000 Data ---")
         print(f"Model Summary: \n{model.summary()}")
-        print("Prior Mean (gamma_tilde):\n", gamma_tilde)
-        print("\nPrior Variance-Covariance Matrix (V):\n", V)
+        # print("Prior Mean (gamma_tilde):\n", gamma_tilde)
+        # print("\nPrior Variance-Covariance Matrix (V):\n", V)
 
         return gamma_tilde, V
 
@@ -562,7 +562,7 @@ def _(sm):
 
 @app.cell
 def _(estimate_prior, pre_2000_sample_prepared, y_col):
-    x_cols_table2 = ["avg_1_12_lagged_inf", "unemployment_rate_lag1"]
+    x_cols_table2 = ["avg_1_12_lagged_inf", "unemployment_rate_lag1", "constant"]
     gamma_tilde, V = estimate_prior(pre_2000_sample_prepared, y_col, x_cols_table2)
     return V, gamma_tilde, x_cols_table2
 
@@ -880,7 +880,6 @@ def _(bayesian_results, pymc_results, x_cols_table2):
         analytical_se,
         param_to_plot_name,
         pymc_mean,
-        pymc_samples_for_param,
         pymc_se,
         weight_to_plot,
     )
@@ -890,12 +889,10 @@ def _(bayesian_results, pymc_results, x_cols_table2):
 def _(
     analytical_mean,
     analytical_se,
-    az,
     param_to_plot_name,
     plot_analytical_distribution,
     plt,
     pymc_mean,
-    pymc_samples_for_param,
     pymc_se,
     weight_to_plot,
 ):
@@ -905,13 +902,13 @@ def _(
     ax_dist = axes_fig1[0]  # Axes for distribution plot
     ax_errorbar = axes_fig1[1]  # Axes for error bar plot
 
-    az.plot_dist(
-        pymc_samples_for_param,
-        ax=ax_dist,
-        label=f"PyMC Posterior (w={weight_to_plot})",
-        color="C0",
-        hist_kwargs={"alpha": 0.6},
-    )
+    # az.plot_dist(
+    #     pymc_samples_for_param,
+    #     ax=ax_dist,
+    #     label=f"PyMC Posterior (w={weight_to_plot})",
+    #     color="C0",
+    #     hist_kwargs={"alpha": 0.6},
+    # )
 
     # 2. Overlay the analytical distribution on the same axes
     plot_analytical_distribution(
@@ -1301,7 +1298,7 @@ def _(
 
         forecasts[w_val_2] = fcst
 
-    return forecasts, initial_inf_lags
+    return coeffs_to_use, forecasts
 
 
 @app.cell
@@ -1389,14 +1386,8 @@ def _(forecasts, go, us_data, y_col):
 
 
 @app.cell
-def _(us_data, y_col):
-    us_data.loc["January 2021":"January 2022", y_col]
-    return
-
-
-@app.cell
-def _(initial_inf_lags):
-    initial_inf_lags
+def _(coeffs_to_use):
+    coeffs_to_use
     return
 
 

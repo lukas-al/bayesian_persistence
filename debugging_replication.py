@@ -12,6 +12,7 @@ def _():
     import statsmodels.api as sm
     import plotly.express as px
     from scipy.linalg import inv as scipy_inv
+    from pprint import pprint
     return mo, np, pd, px, scipy_inv, sm
 
 
@@ -81,7 +82,7 @@ def _(np, sm):
         df['delta_p'] = df['core_cpi_log'].diff(1) * 100
 
         # Create lagged unemployment rate: u(t-1)
-        df['unemployment_rate_lag1'] = df['unemployment_rate'].shift(1)
+        df['unemployment_rate_lag1'] = np.log(df['unemployment_rate']).shift(1)
 
         # Create average lagged inflation: sum_{j=1 to 12} delta_p(t-j) / 12
         # This means taking delta_p, shifting it by 1 (to get t-1),
@@ -108,7 +109,7 @@ def _(np, sm):
         """
         Y = df_sample[y_col]
         X = df_sample[x_cols]
-        X = sm.add_constant(X, has_constant='add') 
+        X = sm.add_constant(X, has_constant='skip', prepend=False) 
 
         model = sm.OLS(Y, X)
         results = model.fit()
@@ -173,6 +174,15 @@ def _(np, scipy_inv):
         # Standard errors are the square root of the diagonal of the posterior variance
         posterior_std_errs = np.sqrt(np.diag(posterior_vcov))
 
+        # Checking edge case at 0
+        if w == 0.0:
+            print("--- CHECKING EDGE CASE AT W = 0 --- ")
+            print("Posterior_vcov:", posterior_vcov)
+            print("Prior Component:", prior_component)
+            print("Data component:", data_component)
+            print("Posterior x Data and Gamma_ls")
+            print(posterior_vcov @ data_component, gamma_ls.values)
+
         return posterior_mean, posterior_std_errs
     return (run_bayesian_estimation,)
 
@@ -216,12 +226,7 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        r"""
-    ### Estimate pre-2000 sample
-
-    """
-    )
+    mo.md(r"""### Estimate pre-2000 sample""")
     return
 
 
@@ -270,7 +275,7 @@ def _(mo):
 @app.cell
 def _(df_full_sample, results_summary, run_ols):
     # OLS for Full Sample
-    full_coeffs, full_std_errs, _, _, X_full, Y_full, full_nobs, _ = run_ols(df_full_sample)
+    full_coeffs, full_std_errs, _, sigma_sq_error_full, X_full, Y_full, full_nobs, _ = run_ols(df_full_sample)
     results_summary['OLS Full Sample'] = {
         'b(1) Coeff': full_coeffs['avg_lag_inflation'],
         'b(1) SE': full_std_errs['avg_lag_inflation'],
@@ -302,6 +307,7 @@ def _(
 
     # 4. Bayesian Estimations for different weights
     weights_on_prior = [0.5, 0.2, 0.05, 0.0] # As in Kiley (2022) Table 2
+    # weights_on_prior = [0.0]
 
     for w_val in weights_on_prior:
         bayes_coeffs, bayes_std_errs = run_bayesian_estimation(
@@ -310,6 +316,9 @@ def _(
             ls_coeffs_post, 
             X_post.values, 
             sigma_sq_error_post,
+            # full_coeffs,
+            # X_full.values,
+            # sigma_sq_error_full,
             w_val
         )
 
@@ -318,14 +327,25 @@ def _(
             'b(1) SE': bayes_std_errs[0],
             'a Coeff': bayes_coeffs[1],
             'a SE': bayes_std_errs[1],
-            'N': post_nobs # Bayesian posterior uses post-sample data size effectively
+            'N': post_nobs
         }
+
+        print(bayes_coeffs)
+
     return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""### Print results""")
+    return
+
+
+@app.cell
+def _():
+    # pprint(results_summary['OLS Post-2000 (Uninf. Prior)'])
+    # # results_summary
+    # pprint(results_summary["Bayesian (w=0.0)"])
     return
 
 
