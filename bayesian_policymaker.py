@@ -15,7 +15,8 @@ def _():
     import plotly.graph_objects as go
     from scipy.linalg import inv as scipy_inv
     from collections import deque
-    return deque, go, make_subplots, mo, np, pd, px, scipy_inv, sm
+    import matplotlib.pyplot as plt
+    return deque, go, make_subplots, mo, np, pd, plt, px, scipy_inv, sm
 
 
 @app.cell
@@ -131,6 +132,7 @@ def _(np, scipy_inv):
                 - np.ndarray: The posterior mean coefficients (Γ_hat).
                 - np.ndarray: The posterior standard errors.
         """
+        print(f"Calculating posterior for {w}")
         # --- Components of Equation (4) ---
         # Prior precision (V^-1)
         inv_V_prior = scipy_inv(V_prior)
@@ -196,13 +198,13 @@ def _(np):
         Processes a single forecast series to rebase it.
         """
         df = base_df.copy()
-    
+
         # Rename the forecast series to join on it
         forecast_series.name = "delta_p_fcst"
-    
+
         # Combine the historical data with the forecast
         df = forecast_series.to_frame().combine_first(df)
-    
+
         # Convert from log-differences back to level
         df['delta_p_fcst'] = df['delta_p_fcst'] / 100
         df['delta_p_fcst'] = df['delta_p_fcst'].fillna(df['core_cpi_log'])
@@ -211,7 +213,7 @@ def _(np):
 
         # Bring into 12 change
         df['delta_p_fcst'] = df['delta_p_fcst'].diff(12)
-    
+
         # Return only the forecasted portion
         return df['delta_p_fcst'].loc[df.index > initial_lags_end]
 
@@ -225,6 +227,12 @@ def _(pd):
     pre_2000_end = pd.Timestamp("1999-12-31")
     post_2000_start = pd.Timestamp("2000-01-01")
     return first_date, last_date, post_2000_start, pre_2000_end
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""# US Version""")
+    return
 
 
 @app.cell
@@ -629,7 +637,7 @@ def _(df_post_2000, df_pre_2000, first_date, last_date, pd, results_summary):
     print(f"Post-1999 sample: {df_post_2000.index.min().strftime('%Y-%m-%d')} to {df_post_2000.index.max().strftime('%Y-%m-%d')}")
     print("\n--- Results Summary ---")
     print(results_df.to_string(float_format="%.3f"))
-    return (results_df,)
+    return column_order, results_df, row_order
 
 
 @app.cell
@@ -786,7 +794,663 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
 
 @app.cell
 def _(mo):
-    mo.md(r"""# UK Version""")
+    mo.md(
+        r"""
+    # UK Version
+
+    Replicate the same - but for the US
+    """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ## Load input data
+
+    ### CPI
+    Monthly index, 2015=100, non-seasonally adjusted, non-food non-energy, source: [OECD Data Explorer](https://data-explorer.oecd.org/vis?lc=en&pg=0&bp=true&snb=20&df%5Bds%5D=dsDisseminateFinalDMZ&df%5Bid%5D=DSD_PRICES@DF_PRICES_ALL&df%5Bag%5D=OECD.SDD.TPS&df%5Bvs%5D=1.0&tm=Inflation%20(CPI)&dq=GBR.M.N.CPI.IX._TXCP01_NRG..&lom=LASTNPERIODS&lo=2000&to%5BTIME_PERIOD%5D=false&vw=tl&lb=bt)
+
+    ### Unemployment
+    Unemployment rate, 16 and over, %, seasonally adjusted. Source: [ONS](https://www.ons.gov.uk/employmentandlabourmarket/peoplenotinwork/unemployment/timeseries/mgsx/lms)
+
+    """
+    )
+    return
+
+
+@app.cell
+def _(pd):
+    cpi_uk = pd.read_csv("data/OECD CPI Data GBR.csv")
+    cpi_uk = cpi_uk[['TIME_PERIOD', "OBS_VALUE"]]
+    cpi_uk.index = pd.to_datetime(cpi_uk['TIME_PERIOD'])
+    cpi_uk = cpi_uk.drop(columns=['TIME_PERIOD'])
+    cpi_uk.sort_index(inplace=True)
+    cpi_uk.head()
+    return (cpi_uk,)
+
+
+@app.cell
+def _(pd):
+    unemp_uk = pd.read_csv("data/Unemployment Rate 16+ Seasonally Adjusted_CLEAN.csv")
+    # unemp_uk = unemp_uk.drop(unemp_uk.index[0:7])
+    unemp_uk.index = pd.to_datetime(unemp_uk['Date'])
+    unemp_uk = unemp_uk.drop(columns=['Date'])
+    unemp_uk.head()
+    return (unemp_uk,)
+
+
+@app.cell
+def _(cpi_uk, pd, unemp_uk):
+    GBR_data = pd.merge(
+        cpi_uk,
+        unemp_uk,
+        how="inner",
+        left_index=True,
+        right_index=True
+    )
+    GBR_data.rename(
+        columns={
+            "OBS_VALUE": "core_cpi",
+            "Value": "unemployment_rate"
+        },inplace=True
+    )
+    GBR_data.head()
+    return (GBR_data,)
+
+
+@app.cell
+def _(pd):
+    GBR_first_date = pd.Timestamp("1971-02-01")
+    GBR_last_date = pd.Timestamp("2019-12-31")
+    GBR_pre_2000_end = pd.Timestamp("1999-12-31")
+    GBR_post_2000_start = pd.Timestamp("2000-01-01")
+    return GBR_first_date, GBR_last_date
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Validate input data""")
+    return
+
+
+@app.cell(hide_code=True)
+def _(GBR_data, go, make_subplots):
+    fig_uk = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=("Core CPI Prices", "Unemployment Rate"),
+    )
+
+    fig_uk.add_trace(
+        go.Scatter(
+            x=GBR_data.index,
+            y=GBR_data["core_cpi"].pct_change(12),
+            name="Core CPI",
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig_uk.add_trace(
+        go.Scatter(
+            x=GBR_data.index,
+            y=GBR_data["unemployment_rate"],
+            name="Unemployment Rate",
+        ),
+        row=2,
+        col=1,
+    )
+
+    fig_uk.update_yaxes(
+        title_text="Percent change from<br>12 months earlier", row=1, col=1
+    )
+    fig_uk.update_yaxes(title_text="Percent", row=2, col=1)
+
+    fig_uk.update_layout(
+        height=750,
+        showlegend=False,
+        title_text="Figure 1. CPI Inflation and the Civilian Unemployment Rate - GBR",
+    )
+
+    fig_uk.show()
+    return
+
+
+@app.cell
+def _(GBR_data, prepare_data, px):
+    GBR_regression_df = prepare_data(GBR_data)
+
+    GBR_fig_input = px.line(
+        GBR_regression_df, 
+        y=['Y', 'avg_lag_inflation', 'unemployment_rate_lag1'], 
+        title="Input Data for regression"
+    )
+
+    GBR_fig_input.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    ))
+    return (GBR_regression_df,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ### Seasonally adjust CPI
+    Seasonally adjust - can see the CPI first diff is super seasonal. Will need to apply to the target
+    """
+    )
+    return
+
+
+@app.cell
+def _(GBR_regression_df, plt, sm):
+    decomp = sm.tsa.seasonal_decompose(GBR_regression_df['Y'], model='additive', period=12)
+
+    # Plot the decomposition
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig_seas, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    # Plot 1: Before and After
+    GBR_regression_df['Y'].plot(ax=ax1, label='Original', legend=True)
+
+    # Adjust the 'value' column in place
+    GBR_regression_df['Y'] = GBR_regression_df['Y'] - decomp.seasonal
+
+    GBR_regression_df['Y'].plot(ax=ax1, label='Seasonally Adjusted', legend=True)
+    ax1.set_title('Seasonal Adjustment Comparison')
+    ax1.set_ylabel('Value')
+
+    # Plot 2: Seasonal Factors
+    decomp.seasonal.plot(ax=ax2, label='Seasonal Component', legend=True)
+    ax2.set_title('Extracted Seasonal Component')
+    ax2.set_ylabel('Seasonal Factor')
+    ax2.set_xlabel('Date')
+
+    plt.tight_layout()
+    plt.show()
+
+    # Print summary statistics of the seasonal component
+    print("Seasonal Component Summary:")
+    print(decomp.seasonal.describe())
+    return
+
+
+@app.cell(hide_code=True)
+def _(GBR_data, first_date, last_date, pd, post_2000_start, pre_2000_end):
+    def _():
+        df = GBR_data.copy()
+        df['core_cpi_1m_change'] = df["core_cpi"].diff(periods=1)
+        df['core_cpi_12m_change'] = df["core_cpi"].diff(periods=12)
+
+        full_sample = df.loc[first_date:last_date]
+        pre_2000_sample = df.loc[first_date:pre_2000_end]
+        post_1999_sample = df.loc[post_2000_start:last_date]
+
+        summary_rows = [
+            # Full Sample
+            {
+                "Sample": "Full sample",
+                "Variable": "CPI inflation (percent)",
+                "Observations": full_sample["core_cpi_1m_change"].count(),
+                "Mean (annual rate)": round(full_sample["core_cpi_12m_change"].mean(), 3),
+                "Std. Deviation": round(full_sample["core_cpi_1m_change"].std(), 3),
+                "Auto-Correlation": round(
+                    full_sample["core_cpi_1m_change"].autocorr(lag=1), 3
+                ),
+            },
+            {
+                "Sample": "Full sample",
+                "Variable": "Unemployment rate (percent)",
+                "Observations": "-",
+                "Mean (annual rate)": round(full_sample["unemployment_rate"].mean(), 3),
+                "Std. Deviation": round(full_sample["unemployment_rate"].std(), 3),
+                "Auto-Correlation": round(
+                    full_sample["unemployment_rate"].autocorr(lag=1), 3
+                ),
+            },
+            # Pre-2000 Sample
+            {
+                "Sample": "Pre-2000 sample",
+                "Variable": "CPI inflation (percent)",
+                "Observations": pre_2000_sample["core_cpi_1m_change"].count(),
+                "Mean (annual rate)": round(
+                    pre_2000_sample["core_cpi_12m_change"].mean(), 3
+                ),
+                "Std. Deviation": round(pre_2000_sample["core_cpi_1m_change"].std(), 3),
+                "Auto-Correlation": round(
+                    pre_2000_sample["core_cpi_1m_change"].autocorr(lag=1), 3
+                ),
+            },
+            {
+                "Sample": "Pre-2000 sample",
+                "Variable": "Unemployment rate (percent)",
+                "Observations": "-",
+                "Mean (annual rate)": round(pre_2000_sample["unemployment_rate"].mean(), 3),
+                "Std. Deviation": round(pre_2000_sample["unemployment_rate"].std(), 3),
+                "Auto-Correlation": round(
+                    pre_2000_sample["unemployment_rate"].autocorr(lag=1), 3
+                ),
+            },
+            # Post-1999 Sample
+            {
+                "Sample": "Post-1999 sample",
+                "Variable": "CPI inflation (percent)",
+                "Observations": post_1999_sample["core_cpi_1m_change"].count(),
+                "Mean (annual rate)": round(
+                    post_1999_sample["core_cpi_12m_change"].mean(), 3
+                ),
+                "Std. Deviation": round(post_1999_sample["core_cpi_1m_change"].std(), 3),
+                "Auto-Correlation": round(
+                    post_1999_sample["core_cpi_1m_change"].autocorr(lag=1), 3
+                ),
+            },
+            {
+                "Sample": "Post-1999 sample",
+                "Variable": "Unemployment rate (percent)",
+                "Observations": "-",
+                "Mean (annual rate)": round(
+                    post_1999_sample["unemployment_rate"].mean(), 3
+                ),
+                "Std. Deviation": round(post_1999_sample["unemployment_rate"].std(), 3),
+                "Auto-Correlation": round(
+                    post_1999_sample["unemployment_rate"].autocorr(lag=1), 3
+                ),
+            },
+        ]
+
+        summary_df = pd.DataFrame(summary_rows)
+
+        final_rows = [
+            # Full Sample Section
+            {
+                "Variable": "Full sample",
+                "Observations": "",
+                "Mean (annual rate)": "",
+                "Std. Deviation": "",
+                "Auto-Correlation": "",
+            },
+            *summary_df[summary_df["Sample"] == "Full sample"]
+            .drop("Sample", axis=1)
+            .to_dict("records"),
+            # Pre-2000 Section
+            {
+                "Variable": "Pre-2000 sample",
+                "Observations": "",
+                "Mean (annual rate)": "",
+                "Std. Deviation": "",
+                "Auto-Correlation": "",
+            },
+            *summary_df[summary_df["Sample"] == "Pre-2000 sample"]
+            .drop("Sample", axis=1)
+            .to_dict("records"),
+            # Post-1999 Section
+            {
+                "Variable": "Post-1999 sample",
+                "Observations": "",
+                "Mean (annual rate)": "",
+                "Std. Deviation": "",
+                "Auto-Correlation": "",
+            },
+            *summary_df[summary_df["Sample"] == "Post-1999 sample"]
+            .drop("Sample", axis=1)
+            .to_dict("records"),
+        ]
+
+        final_table = pd.DataFrame(final_rows)
+        return final_table
+    _()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Perform Least Squares Regression""")
+    return
+
+
+@app.cell
+def _(GBR_regression_df, first_date, last_date, post_2000_start, pre_2000_end):
+    GBR_df_pre_2000 = GBR_regression_df.loc[first_date:pre_2000_end]
+    GBR_df_post_2000 = GBR_regression_df.loc[post_2000_start:last_date]
+    GBR_df_full_sample = GBR_regression_df.loc[first_date:last_date]
+
+    GBR_results_summary = {}
+    return (
+        GBR_df_full_sample,
+        GBR_df_post_2000,
+        GBR_df_pre_2000,
+        GBR_results_summary,
+    )
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Prior Estimation""")
+    return
+
+
+@app.cell
+def _(GBR_df_pre_2000, GBR_results_summary, mo, run_ols):
+    GBR_prior_mean_coeffs, GBR_prior_std_errs, GBR_prior_vcov_coeffs, GBR_prior_sigma_sq_error, GBR_X_pre, GBR_Y_pre, GBR_prior_nobs, GBR_prior_model = run_ols(GBR_df_pre_2000)
+
+    GBR_results_summary['OLS Pre-2000 (Prior)'] = {
+        'b(1) Coeff': GBR_prior_mean_coeffs['avg_lag_inflation'],
+        'b(1) SE': GBR_prior_std_errs['avg_lag_inflation'],
+        'a Coeff': GBR_prior_mean_coeffs['unemployment_rate_lag1'],
+        'a SE': GBR_prior_std_errs['unemployment_rate_lag1'],
+        'const Coeff': GBR_prior_mean_coeffs['const'],
+        'const SE': GBR_prior_mean_coeffs['const'],
+        'N': GBR_prior_nobs
+    }
+    # GBR_results_summary['OLS Pre-2000 (Prior)']
+    mo.md(GBR_prior_model.summary().tables[1].as_html())
+    return GBR_prior_mean_coeffs, GBR_prior_vcov_coeffs
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Post-2000 estimation""")
+    return
+
+
+@app.cell
+def _(GBR_df_post_2000, GBR_results_summary, mo, run_ols):
+    # OLS for Likelihood (Post-2000 data) - also used for "Uninformative Prior"
+    GBR_ls_coeffs_post, GBR_ls_std_errs_post, _, GBR_sigma_sq_error_post, GBR_X_post, GBR_Y_post, GBR_post_nobs, GBR_post_model = run_ols(GBR_df_post_2000)
+    GBR_results_summary['OLS Post-2000 (Uninf. Prior)'] = {
+        'b(1) Coeff': GBR_ls_coeffs_post['avg_lag_inflation'],
+        'b(1) SE': GBR_ls_std_errs_post['avg_lag_inflation'],
+        'a Coeff': GBR_ls_coeffs_post['unemployment_rate_lag1'],
+        'a SE': GBR_ls_std_errs_post['unemployment_rate_lag1'],
+        'N': GBR_post_nobs
+    }
+    # GBR_results_summary['OLS Post-2000 (Uninf. Prior)']
+    mo.md(GBR_post_model.summary().tables[1].as_html())
+    return (
+        GBR_X_post,
+        GBR_ls_coeffs_post,
+        GBR_post_nobs,
+        GBR_sigma_sq_error_post,
+    )
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Full estimation""")
+    return
+
+
+@app.cell
+def _(GBR_df_full_sample, GBR_results_summary, mo, run_ols):
+    # OLS for Full Sample
+    GBR_full_coeffs, GBR_full_std_errs, _, GBR_sigma_sq_error_full, GBR_X_full, GBR_Y_full, GBR_full_nobs, GBR_full_model = run_ols(GBR_df_full_sample)
+    GBR_results_summary['OLS Full Sample'] = {
+        'b(1) Coeff': GBR_full_coeffs['avg_lag_inflation'],
+        'b(1) SE': GBR_full_std_errs['avg_lag_inflation'],
+        'a Coeff': GBR_full_coeffs['unemployment_rate_lag1'],
+        'a SE': GBR_full_std_errs['unemployment_rate_lag1'],
+        'N': GBR_full_nobs
+    }
+    # GBR_results_summary['OLS Full Sample']
+    mo.md(GBR_full_model.summary().tables[1].as_html())
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Bayesian 'Estimation'""")
+    return
+
+
+@app.cell
+def _(
+    GBR_X_post,
+    GBR_ls_coeffs_post,
+    GBR_post_nobs,
+    GBR_prior_mean_coeffs,
+    GBR_prior_vcov_coeffs,
+    GBR_results_summary,
+    GBR_sigma_sq_error_post,
+    run_bayesian_estimation,
+):
+    # 4. Bayesian Estimations for different weights
+    GBR_weights_on_prior = [0.5, 0.2, 0.05, 0.0] # As in Kiley (2022) Table 2
+    # weights_on_prior = [0.0]
+
+    for GBR_w_val in GBR_weights_on_prior:
+        GBR_bayes_coeffs, GBR_bayes_std_errs = run_bayesian_estimation(
+            GBR_prior_mean_coeffs, 
+            GBR_prior_vcov_coeffs,
+            GBR_ls_coeffs_post, 
+            GBR_X_post.values, 
+            GBR_sigma_sq_error_post,
+            # full_coeffs,
+            # X_full.values,
+            # sigma_sq_error_full,
+            GBR_w_val
+        )
+
+        GBR_results_summary[f'Bayesian (w={GBR_w_val})'] = {
+            'b(1) Coeff': GBR_bayes_coeffs[0], # Assuming order: avg_lag_inflation, unemployment_rate_lag1
+            'b(1) SE': GBR_bayes_std_errs[0],
+            'a Coeff': GBR_bayes_coeffs[1],
+            'a SE': GBR_bayes_std_errs[1],
+            'const Coeff': GBR_bayes_coeffs[2],
+            'const SE': GBR_bayes_std_errs[2],
+            'N': GBR_post_nobs
+        }
+    return (GBR_weights_on_prior,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Present results""")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Table of results""")
+    return
+
+
+@app.cell
+def _(
+    GBR_df_post_2000,
+    GBR_df_pre_2000,
+    GBR_first_date,
+    GBR_last_date,
+    GBR_results_summary,
+    column_order,
+    pd,
+    row_order,
+):
+    # 5. Results Presentation
+    GBR_results_df = pd.DataFrame.from_dict(GBR_results_summary, orient='index')
+    GBR_column_order = ['b(1) Coeff', 'b(1) SE', 'a Coeff', 'a SE', 'const Coeff', 'const SE', 'N']
+    # Add 'const Coeff' and 'const SE' to column_order if you uncomment their display
+    GBR_results_df = GBR_results_df.reindex(columns=column_order) # Use reindex for columns
+
+    GBR_row_order = [
+        'OLS Pre-2000 (Prior)',
+        'OLS Post-2000 (Uninf. Prior)',
+        'OLS Full Sample',
+        'Bayesian (w=0.5)',
+        'Bayesian (w=0.2)',
+        'Bayesian (w=0.05)',
+        'Bayesian (w=0.0)'
+    ]
+    GBR_existing_row_order = [row for row in row_order if row in GBR_results_df.index]
+    GBR_results_df = GBR_results_df.reindex(index=GBR_existing_row_order) # Use reindex for rows
+
+
+    print("Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)")
+    print("Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)")
+
+    # ---
+
+    print(f"Data range after processing: {GBR_first_date.strftime('%Y-%m-%d')} to {GBR_last_date.strftime('%Y-%m-%d')}")
+    print(f"Pre-2000 sample: {GBR_df_pre_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_pre_2000.index.max().strftime('%Y-%m-%d')}")
+    print(f"Post-1999 sample: {GBR_df_post_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_post_2000.index.max().strftime('%Y-%m-%d')}")
+    print("\n--- Results Summary ---")
+    print(GBR_results_df.to_string(float_format="%.3f"))
+    return (GBR_results_df,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Forecast""")
+    return
+
+
+@app.cell
+def _(
+    GBR_regression_df,
+    GBR_results_df,
+    GBR_weights_on_prior,
+    iterative_forecast,
+    pd,
+):
+    # Jan 2022. Then May 2023, then full data.
+    GBR_end_of_history = pd.to_datetime("2021-12")
+    GBR_forecast_steps = 24
+
+    GBR_initial_lags_end = GBR_end_of_history
+    GBR_initial_lags_start = GBR_end_of_history - pd.DateOffset(months=11)
+    GBR_initial_inf_lags = GBR_regression_df.loc[GBR_initial_lags_start:GBR_initial_lags_end, "Y"]
+
+    # Set our unemployment assumption (constant at last value)
+    GBR_last_known_unemployment = GBR_regression_df.loc[GBR_end_of_history, "unemployment_rate_lag1"]
+
+    # Create the date range for the 12-month forecast
+    GBR_forecast_dates = pd.date_range(
+        start=GBR_end_of_history, periods=GBR_forecast_steps + 1, freq="MS"
+    )[1:]
+
+    # Create the unemployment Series for the forecast period
+    GBR_unemployment_assumption = pd.Series(
+        data=GBR_last_known_unemployment, index=GBR_forecast_dates
+    )
+
+    GBR_forecasts = {}
+    for GBR_w_val2 in GBR_weights_on_prior:
+        GBR_key = f"Bayesian (w={GBR_w_val2})"
+
+        GBR_coeffs_to_use = GBR_results_df.loc[GBR_key][['b(1) Coeff', 'a Coeff', 'const Coeff']].values
+        GBR_fcst = iterative_forecast(
+            GBR_coeffs_to_use, GBR_initial_inf_lags.values, GBR_unemployment_assumption
+        )
+        GBR_forecasts[GBR_key] = GBR_fcst
+
+    return GBR_forecasts, GBR_initial_lags_end
+
+
+@app.cell
+def _(GBR_data, GBR_forecasts, GBR_initial_lags_end, np, pd, process_forecast):
+    # Empty df to hold data
+    GBR_all_forecasts_df = pd.DataFrame(index=GBR_data.index[GBR_data.index > GBR_initial_lags_end])
+
+    # Create the initial DataFrame with historical data
+    GBR_base_df = pd.DataFrame(index=GBR_data.index)
+    GBR_base_df['core_cpi'] = GBR_data['core_cpi'].loc[:GBR_initial_lags_end]
+    GBR_base_df['core_cpi_log'] = np.log(GBR_base_df['core_cpi'])
+    GBR_base_df['delta_p'] = GBR_base_df['core_cpi_log'].diff(1) * 100
+    GBR_base_df['delta_p_fcst'] = GBR_base_df['delta_p']
+
+    # Fill in the rebased forecasts using the base data
+    for GBR_bayes_key in GBR_forecasts:
+        GBR_rebased_series = process_forecast(
+            GBR_forecasts[GBR_bayes_key], 
+            GBR_base_df,
+            GBR_initial_lags_end
+        )
+        GBR_all_forecasts_df[GBR_bayes_key] = GBR_rebased_series
+
+    GBR_historical_data_for_plot = GBR_data['core_cpi'].loc[
+        pd.Timestamp("2018-01-01"):GBR_initial_lags_end
+    ].diff(12)
+
+    GBR_historical_data_for_plot.name = "core_cpi_12m"
+    return GBR_all_forecasts_df, GBR_historical_data_for_plot
+
+
+@app.cell
+def _(
+    GBR_all_forecasts_df,
+    GBR_historical_data_for_plot,
+    go,
+    initial_lags_end,
+    pd,
+):
+    GBR_fig_fcts = go.Figure()
+
+    # 1. Add historical data
+    GBR_fig_fcts.add_trace(
+        go.Scatter(
+            x=GBR_historical_data_for_plot.index,
+            y=GBR_historical_data_for_plot.values,
+            name='Historical Data',
+            mode='lines',
+        )
+    )
+
+    # 2. Add trace for each forecast_series
+    for GBR_col_name in GBR_all_forecasts_df.columns:
+        GBR_fig_fcts.add_trace(
+            go.Scatter(
+                x=GBR_all_forecasts_df.index,
+                y=GBR_all_forecasts_df[GBR_col_name].values,
+                name=GBR_col_name,
+                mode="lines",
+                line=dict(width=2.5, dash="dot"),
+            )
+        )
+
+    # 3. Update layout
+        GBR_fig_fcts.update_layout(
+            title=dict(
+                text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
+                x=0.5,
+                font=dict(size=22, family="Times New Roman"),
+            ),
+            yaxis_title="Year-over-Year Percent Change",
+            yaxis_ticksuffix="%",
+            template="plotly_white",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.0,
+                xanchor="right",
+                x=1,
+                font=dict(size=12, family="Times New Roman"),
+            ),
+            hovermode="x unified",
+        )
+
+    GBR_fig_fcts.add_vrect(
+        x0=initial_lags_end+pd.DateOffset(months=1),
+        x1=max(GBR_all_forecasts_df[s].index[-1] for s in GBR_all_forecasts_df.columns),
+        # x1=pd.Timestamp("2023-01-01"),
+        annotation_text="Forecast Period",
+        annotation_position="top right",
+        fillcolor="green",
+        opacity=0.1,
+        line_width=0,
+    )
+
+    GBR_fig_fcts.show()
+
+
     return
 
 
