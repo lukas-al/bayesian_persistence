@@ -58,7 +58,7 @@ def _(np):
         df['delta_p'] = df['core_cpi_log'].diff(1) * 100
 
         # Create lagged unemployment rate: u(t-1)
-        df['unemployment_rate_lag1'] = np.log(df[unemployment_col_name]).shift(1)
+        df['unemployment_rate_lag1'] = df[unemployment_col_name].shift(1)
 
         # Create average lagged inflation: sum_{j=1 to 12} delta_p(t-j) / 12
         # This means taking delta_p, shifting it by 1 (to get t-1),
@@ -647,6 +647,8 @@ def _(mo):
     ### Estimated distributions
 
     Is it even useful to plot the estimated distributions?
+
+    > Adrian says No
     """
     )
     return
@@ -815,7 +817,6 @@ def _(mo):
 
     ### Unemployment
     Unemployment rate, 16 and over, %, seasonally adjusted. Source: [ONS](https://www.ons.gov.uk/employmentandlabourmarket/peoplenotinwork/unemployment/timeseries/mgsx/lms)
-
     """
     )
     return
@@ -864,10 +865,11 @@ def _(cpi_uk, pd, unemp_uk):
 @app.cell
 def _(pd):
     GBR_first_date = pd.Timestamp("1971-02-01")
-    GBR_last_date = pd.Timestamp("2019-12-31")
+    # GBR_last_date = pd.Timestamp("2019-12-31")
+    GBR_last_date = pd.Timestamp("2025-02-01")
     GBR_pre_2000_end = pd.Timestamp("1999-12-31")
     GBR_post_2000_start = pd.Timestamp("2000-01-01")
-    return GBR_first_date, GBR_last_date
+    return GBR_first_date, GBR_last_date, GBR_pre_2000_end
 
 
 @app.cell
@@ -986,14 +988,22 @@ def _(GBR_regression_df, plt, sm):
 
 
 @app.cell(hide_code=True)
-def _(GBR_data, first_date, last_date, pd, post_2000_start, pre_2000_end):
+def _(
+    GBR_data,
+    GBR_first_date,
+    GBR_last_date,
+    GBR_pre_2000_end,
+    last_date,
+    pd,
+    post_2000_start,
+):
     def _():
         df = GBR_data.copy()
         df['core_cpi_1m_change'] = df["core_cpi"].diff(periods=1)
         df['core_cpi_12m_change'] = df["core_cpi"].diff(periods=12)
 
-        full_sample = df.loc[first_date:last_date]
-        pre_2000_sample = df.loc[first_date:pre_2000_end]
+        full_sample = df.loc[GBR_first_date:GBR_last_date]
+        pre_2000_sample = df.loc[GBR_first_date:GBR_pre_2000_end]
         post_1999_sample = df.loc[post_2000_start:last_date]
 
         summary_rows = [
@@ -1449,8 +1459,6 @@ def _(
     )
 
     GBR_fig_fcts.show()
-
-
     return
 
 
