@@ -1,6 +1,5 @@
 data/*
 
-!.gitkeep
 
 __marimo__/*
 
@@ -9,3 +8,7 @@ __marimo__/*
 .venv/
 
 .DS_Store
+
+*.pdf
+
+!.gitkeep

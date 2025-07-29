@@ -483,7 +483,7 @@ def create_lag_features_MONTHLY(df_input, inflation_col_name):
     df = df.drop(columns=individual_lag_cols_to_drop)
 
     # # --- Add a constant term for the regression ---
-    df['constant'] = 1.0
+    df["constant"] = 1.0
 
     return df
 

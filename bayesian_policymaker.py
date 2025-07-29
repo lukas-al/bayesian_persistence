@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.11"
+__generated_with = "0.14.13"
 app = marimo.App(width="full")
 
 
@@ -16,6 +16,7 @@ def _():
     from scipy.linalg import inv as scipy_inv
     from collections import deque
     import matplotlib.pyplot as plt
+
     return deque, go, make_subplots, mo, np, pd, plt, px, scipy_inv, sm
 
 
@@ -41,79 +42,85 @@ def _(mo):
 @app.cell
 def _(np):
     def prepare_data(
-        df_input, 
-        cpi_col_name="core_cpi",
-        unemployment_col_name="unemployment_rate"
+        df_input, cpi_col_name="core_cpi", unemployment_col_name="unemployment_rate"
     ):
         """
         Prepares the data for Phillips Curve estimation.
         Calculates inflation, lagged unemployment, and average lagged inflation.
         """
         df = df_input.copy()
-        df = df.sort_index() # Ensure data is sorted by date
+        df = df.sort_index()  # Ensure data is sorted by date
 
         # Calculate Core CPI inflation: 12-month log difference, as a percentage
         # delta_p(t) = (ln(CPI_t) - ln(CPI_{t-12})) * 100
-        df['core_cpi_log'] = np.log(df[cpi_col_name])
-        df['delta_p'] = df['core_cpi_log'].diff(1) * 100
+        df["core_cpi_log"] = np.log(df[cpi_col_name])
+        df["delta_p"] = df["core_cpi_log"].diff(1) * 100 # 1 vs 12 - monthly vs annual rate
 
         # Create lagged unemployment rate: u(t-1)
-        df['unemployment_rate_lag1'] = df[unemployment_col_name].shift(1)
+        df["unemployment_rate_lag1"] = df[unemployment_col_name].shift(1)
 
         # Create average lagged inflation: sum_{j=1 to 12} delta_p(t-j) / 12
         # This means taking delta_p, shifting it by 1 (to get t-1),
         # then taking a 12-period rolling mean.
-        df['avg_lag_inflation'] = df['delta_p'].shift(1).rolling(window=12).mean()
+        df["avg_lag_inflation"] = df["delta_p"].shift(1).rolling(window=12).mean()
 
         # Dependent variable is current inflation
-        df['Y'] = df['delta_p']
+        df["Y"] = df["delta_p"]
 
         # Independent variables for regression at time t:
         # X1: avg_lag_inflation(t)
         # X2: unemployment_rate_lag1(t)
-        df_reg = df[['Y', 'avg_lag_inflation', 'unemployment_rate_lag1']].copy()
+        df_reg = df[["Y", "avg_lag_inflation", "unemployment_rate_lag1"]].copy()
 
         # Drop rows with NaNs created by diffs, shifts, and rolling windows
         df_reg = df_reg.dropna()
         return df_reg
+
     return (prepare_data,)
 
 
 @app.cell
 def _(sm):
-    def run_ols(df_sample, y_col='Y', x_cols=['avg_lag_inflation', 'unemployment_rate_lag1']):
+    def run_ols(
+        df_sample, y_col="Y", x_cols=["avg_lag_inflation", "unemployment_rate_lag1"]
+    ):
         """
         Runs OLS regression and returns key statistics.
         Model: Y = b1*X1 + b2*X2 (no constant, as per paper's Equation 1)
         """
         Y = df_sample[y_col]
         X = df_sample[x_cols]
-        X = sm.add_constant(X, has_constant='skip', prepend=False) 
+        X = sm.add_constant(X, has_constant="skip", prepend=False)
 
         model = sm.OLS(Y, X)
         results = model.fit()
 
         coeffs = results.params
         # Standard errors from OLS
-        std_errs = results.bse 
+        std_errs = results.bse
         # Variance-covariance matrix of coefficients
-        vcov_coeffs = results.cov_params() 
+        vcov_coeffs = results.cov_params()
         # Sigma squared (variance of residuals)
-        sigma_sq_error = results.mse_resid 
+        sigma_sq_error = results.mse_resid
 
-        return coeffs, std_errs, vcov_coeffs, sigma_sq_error, X, Y, results.nobs, results,
+        return (
+            coeffs,
+            std_errs,
+            vcov_coeffs,
+            sigma_sq_error,
+            X,
+            Y,
+            results.nobs,
+            results,
+        )
+
     return (run_ols,)
 
 
 @app.cell
 def _(np, scipy_inv):
     def run_bayesian_estimation(
-        gamma_prior,
-        V_prior,
-        gamma_ls,
-        X_post,
-        sigma_sq_post,
-        w
+        gamma_prior, V_prior, gamma_ls, X_post, sigma_sq_post, w
     ):
         """
         Performs Bayesian estimation based on Equation 4 of Kiley (2022).
@@ -142,9 +149,7 @@ def _(np, scipy_inv):
 
         # --- Calculation based on Equation (4) ---
         # Posterior variance-covariance matrix: (w*V^-1 + (1-w)*σ^-2*X'X)^-1
-        posterior_vcov = scipy_inv(
-            (w * inv_V_prior) + ((1 - w) * data_precision)
-        )
+        posterior_vcov = scipy_inv((w * inv_V_prior) + ((1 - w) * data_precision))
 
         # Posterior mean: post_vcov @ (w*V^-1*Γ_prior + (1-w)*σ^-2*X'X*Γ_LS)
         prior_component = w * inv_V_prior @ gamma_prior
@@ -155,6 +160,7 @@ def _(np, scipy_inv):
         posterior_std_errs = np.sqrt(np.diag(posterior_vcov))
 
         return posterior_mean, posterior_std_errs
+
     return (run_bayesian_estimation,)
 
 
@@ -206,16 +212,16 @@ def _(np):
         df = forecast_series.to_frame().combine_first(df)
 
         # Convert from log-differences back to level
-        df['delta_p_fcst'] = df['delta_p_fcst'] / 100
-        df['delta_p_fcst'] = df['delta_p_fcst'].fillna(df['core_cpi_log'])
-        df['delta_p_fcst'] = df['delta_p_fcst'].cumsum()
-        df['delta_p_fcst'] = np.exp(df['delta_p_fcst'])
+        df["delta_p_fcst"] = df["delta_p_fcst"] / 100
+        df["delta_p_fcst"] = df["delta_p_fcst"].fillna(df["core_cpi_log"])
+        df["delta_p_fcst"] = df["delta_p_fcst"].cumsum()
+        df["delta_p_fcst"] = np.exp(df["delta_p_fcst"])
 
         # Bring into 12 change
-        df['delta_p_fcst'] = df['delta_p_fcst'].diff(12)
+        df["delta_p_fcst"] = df["delta_p_fcst"].diff(12) # vs diff(12)
 
         # Return only the forecasted portion
-        return df['delta_p_fcst'].loc[df.index > initial_lags_end]
+        return df["delta_p_fcst"].loc[df.index > initial_lags_end]
 
     return (process_forecast,)
 
@@ -250,9 +256,7 @@ def _(pd):
     us_core_cpi = pd.read_csv("data/CPI Less Food and Energy.csv")
     us_core_cpi["observation_date"] = pd.to_datetime(us_core_cpi["observation_date"])
 
-    us_data = pd.merge(
-        us_unemployment, us_core_cpi, on="observation_date", how="left"
-    )
+    us_data = pd.merge(us_unemployment, us_core_cpi, on="observation_date", how="left")
     us_data = us_data.rename(
         columns={"UNRATE": "unemployment_rate", "CPILFESL": "core_cpi"}
     )
@@ -323,26 +327,22 @@ def _(prepare_data, px, us_data):
     regression_df = prepare_data(us_data)
 
     fig_input = px.line(
-        regression_df, 
-        y=['Y', 'avg_lag_inflation', 'unemployment_rate_lag1'], 
-        title="Input Data for regression"
+        regression_df,
+        y=["Y", "avg_lag_inflation", "unemployment_rate_lag1"],
+        title="Input Data for regression",
     )
 
-    fig_input.update_layout(legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="right",
-        x=1
-    ))
+    fig_input.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     return (regression_df,)
 
 
 @app.cell(hide_code=True)
 def _(first_date, last_date, pd, post_2000_start, pre_2000_end, us_data):
     df = us_data.copy()
-    df['core_cpi_1m_change'] = df["core_cpi"].diff(periods=1)
-    df['core_cpi_12m_change'] = df["core_cpi"].diff(periods=12)
+    df["core_cpi_1m_change"] = df["core_cpi"].diff(periods=1)
+    df["core_cpi_12m_change"] = df["core_cpi"].diff(periods=12)
 
     full_sample = df.loc[first_date:last_date]
     pre_2000_sample = df.loc[first_date:pre_2000_end]
@@ -487,16 +487,25 @@ def _(mo):
 
 @app.cell
 def _(df_pre_2000, mo, results_summary, run_ols):
-    prior_mean_coeffs, prior_std_errs, prior_vcov_coeffs, prior_sigma_sq_error, X_pre, Y_pre, prior_nobs, prior_model = run_ols(df_pre_2000)
+    (
+        prior_mean_coeffs,
+        prior_std_errs,
+        prior_vcov_coeffs,
+        prior_sigma_sq_error,
+        X_pre,
+        Y_pre,
+        prior_nobs,
+        prior_model,
+    ) = run_ols(df_pre_2000)
 
-    results_summary['OLS Pre-2000 (Prior)'] = {
-        'b(1) Coeff': prior_mean_coeffs['avg_lag_inflation'],
-        'b(1) SE': prior_std_errs['avg_lag_inflation'],
-        'a Coeff': prior_mean_coeffs['unemployment_rate_lag1'],
-        'a SE': prior_std_errs['unemployment_rate_lag1'],
-        'const Coeff': prior_mean_coeffs['const'],
-        'const SE': prior_mean_coeffs['const'],
-        'N': prior_nobs
+    results_summary["OLS Pre-2000 (Prior)"] = {
+        "b(1) Coeff": prior_mean_coeffs["avg_lag_inflation"],
+        "b(1) SE": prior_std_errs["avg_lag_inflation"],
+        "a Coeff": prior_mean_coeffs["unemployment_rate_lag1"],
+        "a SE": prior_std_errs["unemployment_rate_lag1"],
+        "const Coeff": prior_mean_coeffs["const"],
+        "const SE": prior_std_errs["const"],
+        "N": prior_nobs,
     }
     # results_summary['OLS Pre-2000 (Prior)']
     mo.md(prior_model.summary().tables[1].as_html())
@@ -512,13 +521,22 @@ def _(mo):
 @app.cell
 def _(df_post_2000, mo, results_summary, run_ols):
     # OLS for Likelihood (Post-2000 data) - also used for "Uninformative Prior"
-    ls_coeffs_post, ls_std_errs_post, _, sigma_sq_error_post, X_post, Y_post, post_nobs, post_model = run_ols(df_post_2000)
-    results_summary['OLS Post-2000 (Uninf. Prior)'] = {
-        'b(1) Coeff': ls_coeffs_post['avg_lag_inflation'],
-        'b(1) SE': ls_std_errs_post['avg_lag_inflation'],
-        'a Coeff': ls_coeffs_post['unemployment_rate_lag1'],
-        'a SE': ls_std_errs_post['unemployment_rate_lag1'],
-        'N': post_nobs
+    (
+        ls_coeffs_post,
+        ls_std_errs_post,
+        _,
+        sigma_sq_error_post,
+        X_post,
+        Y_post,
+        post_nobs,
+        post_model,
+    ) = run_ols(df_post_2000)
+    results_summary["OLS Post-2000 (Uninf. Prior)"] = {
+        "b(1) Coeff": ls_coeffs_post["avg_lag_inflation"],
+        "b(1) SE": ls_std_errs_post["avg_lag_inflation"],
+        "a Coeff": ls_coeffs_post["unemployment_rate_lag1"],
+        "a SE": ls_std_errs_post["unemployment_rate_lag1"],
+        "N": post_nobs,
     }
     # results_summary['OLS Post-2000 (Uninf. Prior)']
     mo.md(post_model.summary().tables[1].as_html())
@@ -534,13 +552,22 @@ def _(mo):
 @app.cell
 def _(df_full_sample, mo, results_summary, run_ols):
     # OLS for Full Sample
-    full_coeffs, full_std_errs, _, sigma_sq_error_full, X_full, Y_full, full_nobs, full_model = run_ols(df_full_sample)
-    results_summary['OLS Full Sample'] = {
-        'b(1) Coeff': full_coeffs['avg_lag_inflation'],
-        'b(1) SE': full_std_errs['avg_lag_inflation'],
-        'a Coeff': full_coeffs['unemployment_rate_lag1'],
-        'a SE': full_std_errs['unemployment_rate_lag1'],
-        'N': full_nobs
+    (
+        full_coeffs,
+        full_std_errs,
+        _,
+        sigma_sq_error_full,
+        X_full,
+        Y_full,
+        full_nobs,
+        full_model,
+    ) = run_ols(df_full_sample)
+    results_summary["OLS Full Sample"] = {
+        "b(1) Coeff": full_coeffs["avg_lag_inflation"],
+        "b(1) SE": full_std_errs["avg_lag_inflation"],
+        "a Coeff": full_coeffs["unemployment_rate_lag1"],
+        "a SE": full_std_errs["unemployment_rate_lag1"],
+        "N": full_nobs,
     }
     # results_summary['OLS Full Sample']
     mo.md(full_model.summary().tables[1].as_html())
@@ -565,30 +592,32 @@ def _(
     sigma_sq_error_post,
 ):
     # 4. Bayesian Estimations for different weights
-    weights_on_prior = [0.5, 0.2, 0.05, 0.0] # As in Kiley (2022) Table 2
+    weights_on_prior = [0.5, 0.2, 0.05, 0.0]  # As in Kiley (2022) Table 2
     # weights_on_prior = [0.0]
 
     for w_val in weights_on_prior:
         bayes_coeffs, bayes_std_errs = run_bayesian_estimation(
-            prior_mean_coeffs, 
+            prior_mean_coeffs,
             prior_vcov_coeffs,
-            ls_coeffs_post, 
-            X_post.values, 
+            ls_coeffs_post,
+            X_post.values,
             sigma_sq_error_post,
             # full_coeffs,
             # X_full.values,
             # sigma_sq_error_full,
-            w_val
+            w_val,
         )
 
-        results_summary[f'Bayesian (w={w_val})'] = {
-            'b(1) Coeff': bayes_coeffs[0], # Assuming order: avg_lag_inflation, unemployment_rate_lag1
-            'b(1) SE': bayes_std_errs[0],
-            'a Coeff': bayes_coeffs[1],
-            'a SE': bayes_std_errs[1],
-            'const Coeff': bayes_coeffs[2],
-            'const SE': bayes_std_errs[2],
-            'N': post_nobs
+        results_summary[f"Bayesian (w={w_val})"] = {
+            "b(1) Coeff": bayes_coeffs[
+                0
+            ],  # Assuming order: avg_lag_inflation, unemployment_rate_lag1
+            "b(1) SE": bayes_std_errs[0],
+            "a Coeff": bayes_coeffs[1],
+            "a SE": bayes_std_errs[1],
+            "const Coeff": bayes_coeffs[2],
+            "const SE": bayes_std_errs[2],
+            "N": post_nobs,
         }
 
     return (weights_on_prior,)
@@ -609,32 +638,49 @@ def _(mo):
 @app.cell
 def _(df_post_2000, df_pre_2000, first_date, last_date, pd, results_summary):
     # 5. Results Presentation
-    results_df = pd.DataFrame.from_dict(results_summary, orient='index')
-    column_order = ['b(1) Coeff', 'b(1) SE', 'a Coeff', 'a SE', 'const Coeff', 'const SE', 'N']
+    results_df = pd.DataFrame.from_dict(results_summary, orient="index")
+    column_order = [
+        "b(1) Coeff",
+        "b(1) SE",
+        "a Coeff",
+        "a SE",
+        "const Coeff",
+        "const SE",
+        "N",
+    ]
     # Add 'const Coeff' and 'const SE' to column_order if you uncomment their display
-    results_df = results_df.reindex(columns=column_order) # Use reindex for columns
+    results_df = results_df.reindex(columns=column_order)  # Use reindex for columns
 
     row_order = [
-        'OLS Pre-2000 (Prior)',
-        'OLS Post-2000 (Uninf. Prior)',
-        'OLS Full Sample',
-        'Bayesian (w=0.5)',
-        'Bayesian (w=0.2)',
-        'Bayesian (w=0.05)',
-        'Bayesian (w=0.0)'
+        "OLS Pre-2000 (Prior)",
+        "OLS Post-2000 (Uninf. Prior)",
+        "OLS Full Sample",
+        "Bayesian (w=0.5)",
+        "Bayesian (w=0.2)",
+        "Bayesian (w=0.05)",
+        "Bayesian (w=0.0)",
     ]
     existing_row_order = [row for row in row_order if row in results_df.index]
-    results_df = results_df.reindex(index=existing_row_order) # Use reindex for rows
+    results_df = results_df.reindex(index=existing_row_order)  # Use reindex for rows
 
-
-    print("Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)")
-    print("Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)")
+    print(
+        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)"
+    )
+    print(
+        "Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
+    )
 
     # ---
 
-    print(f"Data range after processing: {first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}")
-    print(f"Pre-2000 sample: {df_pre_2000.index.min().strftime('%Y-%m-%d')} to {df_pre_2000.index.max().strftime('%Y-%m-%d')}")
-    print(f"Post-1999 sample: {df_post_2000.index.min().strftime('%Y-%m-%d')} to {df_post_2000.index.max().strftime('%Y-%m-%d')}")
+    print(
+        f"Data range after processing: {first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}"
+    )
+    print(
+        f"Pre-2000 sample: {df_pre_2000.index.min().strftime('%Y-%m-%d')} to {df_pre_2000.index.max().strftime('%Y-%m-%d')}"
+    )
+    print(
+        f"Post-1999 sample: {df_post_2000.index.min().strftime('%Y-%m-%d')} to {df_post_2000.index.max().strftime('%Y-%m-%d')}"
+    )
     print("\n--- Results Summary ---")
     print(results_df.to_string(float_format="%.3f"))
     return column_order, results_df, row_order
@@ -666,6 +712,12 @@ def _(mo):
 
 
 @app.cell
+def _(results_df):
+    results_df
+    return
+
+
+@app.cell
 def _(iterative_forecast, pd, regression_df, results_df, weights_on_prior):
     # Jan 2022. Then May 2023, then full data.
     end_of_history = pd.to_datetime("2021-12")
@@ -676,7 +728,9 @@ def _(iterative_forecast, pd, regression_df, results_df, weights_on_prior):
     initial_inf_lags = regression_df.loc[initial_lags_start:initial_lags_end, "Y"]
 
     # Set our unemployment assumption (constant at last value)
-    last_known_unemployment = regression_df.loc[end_of_history, "unemployment_rate_lag1"]
+    last_known_unemployment = regression_df.loc[
+        end_of_history, "unemployment_rate_lag1"
+    ]
 
     # Create the date range for the 12-month forecast
     forecast_dates = pd.date_range(
@@ -691,8 +745,9 @@ def _(iterative_forecast, pd, regression_df, results_df, weights_on_prior):
     forecasts = {}
     for w_val2 in weights_on_prior:
         key = f"Bayesian (w={w_val2})"
-
-        coeffs_to_use = results_df.loc[key][['b(1) Coeff', 'a Coeff', 'const Coeff']].values
+        coeffs_to_use = results_df.loc[key][
+            ["b(1) Coeff", "a Coeff", "const Coeff"]
+        ].values
         fcst = iterative_forecast(
             coeffs_to_use, initial_inf_lags.values, unemployment_assumption
         )
@@ -704,27 +759,27 @@ def _(iterative_forecast, pd, regression_df, results_df, weights_on_prior):
 @app.cell
 def _(forecasts, initial_lags_end, np, pd, process_forecast, us_data):
     # Empty df to hold data
-    all_forecasts_df = pd.DataFrame(index=us_data.index[us_data.index > initial_lags_end])
+    all_forecasts_df = pd.DataFrame(
+        index=us_data.index[us_data.index > initial_lags_end]
+    )
 
     # Create the initial DataFrame with historical data
     base_df = pd.DataFrame(index=us_data.index)
-    base_df['core_cpi'] = us_data['core_cpi'].loc[:initial_lags_end]
-    base_df['core_cpi_log'] = np.log(base_df['core_cpi'])
-    base_df['delta_p'] = base_df['core_cpi_log'].diff(1) * 100
-    base_df['delta_p_fcst'] = base_df['delta_p']
+    base_df["core_cpi"] = us_data["core_cpi"].loc[:initial_lags_end]
+    base_df["core_cpi_log"] = np.log(base_df["core_cpi"])
+    base_df["delta_p"] = base_df["core_cpi_log"].diff(1) * 100
+    base_df["delta_p_fcst"] = base_df["delta_p"]
 
     # Fill in the rebased forecasts using the base data
     for bayes_key in forecasts:
         rebased_series = process_forecast(
-            forecasts[bayes_key], 
-            base_df,
-            initial_lags_end
+            forecasts[bayes_key], base_df, initial_lags_end
         )
         all_forecasts_df[bayes_key] = rebased_series
 
-    historical_data_for_plot = us_data['core_cpi'].loc[
-        pd.Timestamp("2018-01-01"):initial_lags_end
-    ].diff(12)
+    historical_data_for_plot = (
+        us_data["core_cpi"].loc[pd.Timestamp("2018-01-01") : initial_lags_end].diff(12)
+    )
 
     historical_data_for_plot.name = "core_cpi_12m"
     return all_forecasts_df, historical_data_for_plot
@@ -739,8 +794,8 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
         go.Scatter(
             x=historical_data_for_plot.index,
             y=historical_data_for_plot.values,
-            name='Historical Data',
-            mode='lines',
+            name="Historical Data",
+            mode="lines",
         )
     )
 
@@ -756,7 +811,7 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
             )
         )
 
-    # 3. Update layout
+        # 3. Update layout
         fig_fcts.update_layout(
             title=dict(
                 text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
@@ -778,7 +833,7 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
         )
 
     fig_fcts.add_vrect(
-        x0=initial_lags_end+pd.DateOffset(months=1),
+        x0=initial_lags_end + pd.DateOffset(months=1),
         x1=max(all_forecasts_df[s].index[-1] for s in all_forecasts_df.columns),
         # x1=pd.Timestamp("2023-01-01"),
         annotation_text="Forecast Period",
@@ -789,7 +844,6 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
     )
 
     fig_fcts.show()
-
 
     return
 
@@ -825,9 +879,9 @@ def _(mo):
 @app.cell
 def _(pd):
     cpi_uk = pd.read_csv("data/OECD CPI Data GBR.csv")
-    cpi_uk = cpi_uk[['TIME_PERIOD', "OBS_VALUE"]]
-    cpi_uk.index = pd.to_datetime(cpi_uk['TIME_PERIOD'])
-    cpi_uk = cpi_uk.drop(columns=['TIME_PERIOD'])
+    cpi_uk = cpi_uk[["TIME_PERIOD", "OBS_VALUE"]]
+    cpi_uk.index = pd.to_datetime(cpi_uk["TIME_PERIOD"])
+    cpi_uk = cpi_uk.drop(columns=["TIME_PERIOD"])
     cpi_uk.sort_index(inplace=True)
     cpi_uk.head()
     return (cpi_uk,)
@@ -837,8 +891,8 @@ def _(pd):
 def _(pd):
     unemp_uk = pd.read_csv("data/Unemployment Rate 16+ Seasonally Adjusted_CLEAN.csv")
     # unemp_uk = unemp_uk.drop(unemp_uk.index[0:7])
-    unemp_uk.index = pd.to_datetime(unemp_uk['Date'])
-    unemp_uk = unemp_uk.drop(columns=['Date'])
+    unemp_uk.index = pd.to_datetime(unemp_uk["Date"])
+    unemp_uk = unemp_uk.drop(columns=["Date"])
     unemp_uk.head()
     return (unemp_uk,)
 
@@ -846,17 +900,10 @@ def _(pd):
 @app.cell
 def _(cpi_uk, pd, unemp_uk):
     GBR_data = pd.merge(
-        cpi_uk,
-        unemp_uk,
-        how="inner",
-        left_index=True,
-        right_index=True
+        cpi_uk, unemp_uk, how="inner", left_index=True, right_index=True
     )
     GBR_data.rename(
-        columns={
-            "OBS_VALUE": "core_cpi",
-            "Value": "unemployment_rate"
-        },inplace=True
+        columns={"OBS_VALUE": "core_cpi", "Value": "unemployment_rate"}, inplace=True
     )
     GBR_data.head()
     return (GBR_data,)
@@ -928,18 +975,14 @@ def _(GBR_data, prepare_data, px):
     GBR_regression_df = prepare_data(GBR_data)
 
     GBR_fig_input = px.line(
-        GBR_regression_df, 
-        y=['Y', 'avg_lag_inflation', 'unemployment_rate_lag1'], 
-        title="Input Data for regression"
+        GBR_regression_df,
+        y=["Y", "avg_lag_inflation", "unemployment_rate_lag1"],
+        title="Input Data for regression",
     )
 
-    GBR_fig_input.update_layout(legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="right",
-        x=1
-    ))
+    GBR_fig_input.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     return (GBR_regression_df,)
 
 
@@ -956,27 +999,29 @@ def _(mo):
 
 @app.cell
 def _(GBR_regression_df, plt, sm):
-    decomp = sm.tsa.seasonal_decompose(GBR_regression_df['Y'], model='additive', period=12)
+    decomp = sm.tsa.seasonal_decompose(
+        GBR_regression_df["Y"], model="additive", period=12
+    )
 
     # Plot the decomposition
-    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.style.use("seaborn-v0_8-whitegrid")
     fig_seas, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     # Plot 1: Before and After
-    GBR_regression_df['Y'].plot(ax=ax1, label='Original', legend=True)
+    GBR_regression_df["Y"].plot(ax=ax1, label="Original", legend=True)
 
     # Adjust the 'value' column in place
-    GBR_regression_df['Y'] = GBR_regression_df['Y'] - decomp.seasonal
+    GBR_regression_df["Y"] = GBR_regression_df["Y"] - decomp.seasonal
 
-    GBR_regression_df['Y'].plot(ax=ax1, label='Seasonally Adjusted', legend=True)
-    ax1.set_title('Seasonal Adjustment Comparison')
-    ax1.set_ylabel('Value')
+    GBR_regression_df["Y"].plot(ax=ax1, label="Seasonally Adjusted", legend=True)
+    ax1.set_title("Seasonal Adjustment Comparison")
+    ax1.set_ylabel("Value")
 
     # Plot 2: Seasonal Factors
-    decomp.seasonal.plot(ax=ax2, label='Seasonal Component', legend=True)
-    ax2.set_title('Extracted Seasonal Component')
-    ax2.set_ylabel('Seasonal Factor')
-    ax2.set_xlabel('Date')
+    decomp.seasonal.plot(ax=ax2, label="Seasonal Component", legend=True)
+    ax2.set_title("Extracted Seasonal Component")
+    ax2.set_ylabel("Seasonal Factor")
+    ax2.set_xlabel("Date")
 
     plt.tight_layout()
     plt.show()
@@ -999,8 +1044,8 @@ def _(
 ):
     def _():
         df = GBR_data.copy()
-        df['core_cpi_1m_change'] = df["core_cpi"].diff(periods=1)
-        df['core_cpi_12m_change'] = df["core_cpi"].diff(periods=12)
+        df["core_cpi_1m_change"] = df["core_cpi"].diff(periods=1)
+        df["core_cpi_12m_change"] = df["core_cpi"].diff(periods=12)
 
         full_sample = df.loc[GBR_first_date:GBR_last_date]
         pre_2000_sample = df.loc[GBR_first_date:GBR_pre_2000_end]
@@ -1012,7 +1057,9 @@ def _(
                 "Sample": "Full sample",
                 "Variable": "CPI inflation (percent)",
                 "Observations": full_sample["core_cpi_1m_change"].count(),
-                "Mean (annual rate)": round(full_sample["core_cpi_12m_change"].mean(), 3),
+                "Mean (annual rate)": round(
+                    full_sample["core_cpi_12m_change"].mean(), 3
+                ),
                 "Std. Deviation": round(full_sample["core_cpi_1m_change"].std(), 3),
                 "Auto-Correlation": round(
                     full_sample["core_cpi_1m_change"].autocorr(lag=1), 3
@@ -1045,7 +1092,9 @@ def _(
                 "Sample": "Pre-2000 sample",
                 "Variable": "Unemployment rate (percent)",
                 "Observations": "-",
-                "Mean (annual rate)": round(pre_2000_sample["unemployment_rate"].mean(), 3),
+                "Mean (annual rate)": round(
+                    pre_2000_sample["unemployment_rate"].mean(), 3
+                ),
                 "Std. Deviation": round(pre_2000_sample["unemployment_rate"].std(), 3),
                 "Auto-Correlation": round(
                     pre_2000_sample["unemployment_rate"].autocorr(lag=1), 3
@@ -1059,7 +1108,9 @@ def _(
                 "Mean (annual rate)": round(
                     post_1999_sample["core_cpi_12m_change"].mean(), 3
                 ),
-                "Std. Deviation": round(post_1999_sample["core_cpi_1m_change"].std(), 3),
+                "Std. Deviation": round(
+                    post_1999_sample["core_cpi_1m_change"].std(), 3
+                ),
                 "Auto-Correlation": round(
                     post_1999_sample["core_cpi_1m_change"].autocorr(lag=1), 3
                 ),
@@ -1118,6 +1169,7 @@ def _(
 
         final_table = pd.DataFrame(final_rows)
         return final_table
+
     _()
     return
 
@@ -1151,16 +1203,25 @@ def _(mo):
 
 @app.cell
 def _(GBR_df_pre_2000, GBR_results_summary, mo, run_ols):
-    GBR_prior_mean_coeffs, GBR_prior_std_errs, GBR_prior_vcov_coeffs, GBR_prior_sigma_sq_error, GBR_X_pre, GBR_Y_pre, GBR_prior_nobs, GBR_prior_model = run_ols(GBR_df_pre_2000)
+    (
+        GBR_prior_mean_coeffs,
+        GBR_prior_std_errs,
+        GBR_prior_vcov_coeffs,
+        GBR_prior_sigma_sq_error,
+        GBR_X_pre,
+        GBR_Y_pre,
+        GBR_prior_nobs,
+        GBR_prior_model,
+    ) = run_ols(GBR_df_pre_2000)
 
-    GBR_results_summary['OLS Pre-2000 (Prior)'] = {
-        'b(1) Coeff': GBR_prior_mean_coeffs['avg_lag_inflation'],
-        'b(1) SE': GBR_prior_std_errs['avg_lag_inflation'],
-        'a Coeff': GBR_prior_mean_coeffs['unemployment_rate_lag1'],
-        'a SE': GBR_prior_std_errs['unemployment_rate_lag1'],
-        'const Coeff': GBR_prior_mean_coeffs['const'],
-        'const SE': GBR_prior_mean_coeffs['const'],
-        'N': GBR_prior_nobs
+    GBR_results_summary["OLS Pre-2000 (Prior)"] = {
+        "b(1) Coeff": GBR_prior_mean_coeffs["avg_lag_inflation"],
+        "b(1) SE": GBR_prior_std_errs["avg_lag_inflation"],
+        "a Coeff": GBR_prior_mean_coeffs["unemployment_rate_lag1"],
+        "a SE": GBR_prior_std_errs["unemployment_rate_lag1"],
+        "const Coeff": GBR_prior_mean_coeffs["const"],
+        "const SE": GBR_prior_mean_coeffs["const"],
+        "N": GBR_prior_nobs,
     }
     # GBR_results_summary['OLS Pre-2000 (Prior)']
     mo.md(GBR_prior_model.summary().tables[1].as_html())
@@ -1176,13 +1237,22 @@ def _(mo):
 @app.cell
 def _(GBR_df_post_2000, GBR_results_summary, mo, run_ols):
     # OLS for Likelihood (Post-2000 data) - also used for "Uninformative Prior"
-    GBR_ls_coeffs_post, GBR_ls_std_errs_post, _, GBR_sigma_sq_error_post, GBR_X_post, GBR_Y_post, GBR_post_nobs, GBR_post_model = run_ols(GBR_df_post_2000)
-    GBR_results_summary['OLS Post-2000 (Uninf. Prior)'] = {
-        'b(1) Coeff': GBR_ls_coeffs_post['avg_lag_inflation'],
-        'b(1) SE': GBR_ls_std_errs_post['avg_lag_inflation'],
-        'a Coeff': GBR_ls_coeffs_post['unemployment_rate_lag1'],
-        'a SE': GBR_ls_std_errs_post['unemployment_rate_lag1'],
-        'N': GBR_post_nobs
+    (
+        GBR_ls_coeffs_post,
+        GBR_ls_std_errs_post,
+        _,
+        GBR_sigma_sq_error_post,
+        GBR_X_post,
+        GBR_Y_post,
+        GBR_post_nobs,
+        GBR_post_model,
+    ) = run_ols(GBR_df_post_2000)
+    GBR_results_summary["OLS Post-2000 (Uninf. Prior)"] = {
+        "b(1) Coeff": GBR_ls_coeffs_post["avg_lag_inflation"],
+        "b(1) SE": GBR_ls_std_errs_post["avg_lag_inflation"],
+        "a Coeff": GBR_ls_coeffs_post["unemployment_rate_lag1"],
+        "a SE": GBR_ls_std_errs_post["unemployment_rate_lag1"],
+        "N": GBR_post_nobs,
     }
     # GBR_results_summary['OLS Post-2000 (Uninf. Prior)']
     mo.md(GBR_post_model.summary().tables[1].as_html())
@@ -1203,13 +1273,22 @@ def _(mo):
 @app.cell
 def _(GBR_df_full_sample, GBR_results_summary, mo, run_ols):
     # OLS for Full Sample
-    GBR_full_coeffs, GBR_full_std_errs, _, GBR_sigma_sq_error_full, GBR_X_full, GBR_Y_full, GBR_full_nobs, GBR_full_model = run_ols(GBR_df_full_sample)
-    GBR_results_summary['OLS Full Sample'] = {
-        'b(1) Coeff': GBR_full_coeffs['avg_lag_inflation'],
-        'b(1) SE': GBR_full_std_errs['avg_lag_inflation'],
-        'a Coeff': GBR_full_coeffs['unemployment_rate_lag1'],
-        'a SE': GBR_full_std_errs['unemployment_rate_lag1'],
-        'N': GBR_full_nobs
+    (
+        GBR_full_coeffs,
+        GBR_full_std_errs,
+        _,
+        GBR_sigma_sq_error_full,
+        GBR_X_full,
+        GBR_Y_full,
+        GBR_full_nobs,
+        GBR_full_model,
+    ) = run_ols(GBR_df_full_sample)
+    GBR_results_summary["OLS Full Sample"] = {
+        "b(1) Coeff": GBR_full_coeffs["avg_lag_inflation"],
+        "b(1) SE": GBR_full_std_errs["avg_lag_inflation"],
+        "a Coeff": GBR_full_coeffs["unemployment_rate_lag1"],
+        "a SE": GBR_full_std_errs["unemployment_rate_lag1"],
+        "N": GBR_full_nobs,
     }
     # GBR_results_summary['OLS Full Sample']
     mo.md(GBR_full_model.summary().tables[1].as_html())
@@ -1234,30 +1313,32 @@ def _(
     run_bayesian_estimation,
 ):
     # 4. Bayesian Estimations for different weights
-    GBR_weights_on_prior = [0.5, 0.2, 0.05, 0.0] # As in Kiley (2022) Table 2
+    GBR_weights_on_prior = [0.5, 0.2, 0.05, 0.0]  # As in Kiley (2022) Table 2
     # weights_on_prior = [0.0]
 
     for GBR_w_val in GBR_weights_on_prior:
         GBR_bayes_coeffs, GBR_bayes_std_errs = run_bayesian_estimation(
-            GBR_prior_mean_coeffs, 
+            GBR_prior_mean_coeffs,
             GBR_prior_vcov_coeffs,
-            GBR_ls_coeffs_post, 
-            GBR_X_post.values, 
+            GBR_ls_coeffs_post,
+            GBR_X_post.values,
             GBR_sigma_sq_error_post,
             # full_coeffs,
             # X_full.values,
             # sigma_sq_error_full,
-            GBR_w_val
+            GBR_w_val,
         )
 
-        GBR_results_summary[f'Bayesian (w={GBR_w_val})'] = {
-            'b(1) Coeff': GBR_bayes_coeffs[0], # Assuming order: avg_lag_inflation, unemployment_rate_lag1
-            'b(1) SE': GBR_bayes_std_errs[0],
-            'a Coeff': GBR_bayes_coeffs[1],
-            'a SE': GBR_bayes_std_errs[1],
-            'const Coeff': GBR_bayes_coeffs[2],
-            'const SE': GBR_bayes_std_errs[2],
-            'N': GBR_post_nobs
+        GBR_results_summary[f"Bayesian (w={GBR_w_val})"] = {
+            "b(1) Coeff": GBR_bayes_coeffs[
+                0
+            ],  # Assuming order: avg_lag_inflation, unemployment_rate_lag1
+            "b(1) SE": GBR_bayes_std_errs[0],
+            "a Coeff": GBR_bayes_coeffs[1],
+            "a SE": GBR_bayes_std_errs[1],
+            "const Coeff": GBR_bayes_coeffs[2],
+            "const SE": GBR_bayes_std_errs[2],
+            "N": GBR_post_nobs,
         }
     return (GBR_weights_on_prior,)
 
@@ -1286,32 +1367,53 @@ def _(
     row_order,
 ):
     # 5. Results Presentation
-    GBR_results_df = pd.DataFrame.from_dict(GBR_results_summary, orient='index')
-    GBR_column_order = ['b(1) Coeff', 'b(1) SE', 'a Coeff', 'a SE', 'const Coeff', 'const SE', 'N']
+    GBR_results_df = pd.DataFrame.from_dict(GBR_results_summary, orient="index")
+    GBR_column_order = [
+        "b(1) Coeff",
+        "b(1) SE",
+        "a Coeff",
+        "a SE",
+        "const Coeff",
+        "const SE",
+        "N",
+    ]
     # Add 'const Coeff' and 'const SE' to column_order if you uncomment their display
-    GBR_results_df = GBR_results_df.reindex(columns=column_order) # Use reindex for columns
+    GBR_results_df = GBR_results_df.reindex(
+        columns=column_order
+    )  # Use reindex for columns
 
     GBR_row_order = [
-        'OLS Pre-2000 (Prior)',
-        'OLS Post-2000 (Uninf. Prior)',
-        'OLS Full Sample',
-        'Bayesian (w=0.5)',
-        'Bayesian (w=0.2)',
-        'Bayesian (w=0.05)',
-        'Bayesian (w=0.0)'
+        "OLS Pre-2000 (Prior)",
+        "OLS Post-2000 (Uninf. Prior)",
+        "OLS Full Sample",
+        "Bayesian (w=0.5)",
+        "Bayesian (w=0.2)",
+        "Bayesian (w=0.05)",
+        "Bayesian (w=0.0)",
     ]
     GBR_existing_row_order = [row for row in row_order if row in GBR_results_df.index]
-    GBR_results_df = GBR_results_df.reindex(index=GBR_existing_row_order) # Use reindex for rows
+    GBR_results_df = GBR_results_df.reindex(
+        index=GBR_existing_row_order
+    )  # Use reindex for rows
 
-
-    print("Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)")
-    print("Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)")
+    print(
+        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)"
+    )
+    print(
+        "Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
+    )
 
     # ---
 
-    print(f"Data range after processing: {GBR_first_date.strftime('%Y-%m-%d')} to {GBR_last_date.strftime('%Y-%m-%d')}")
-    print(f"Pre-2000 sample: {GBR_df_pre_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_pre_2000.index.max().strftime('%Y-%m-%d')}")
-    print(f"Post-1999 sample: {GBR_df_post_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_post_2000.index.max().strftime('%Y-%m-%d')}")
+    print(
+        f"Data range after processing: {GBR_first_date.strftime('%Y-%m-%d')} to {GBR_last_date.strftime('%Y-%m-%d')}"
+    )
+    print(
+        f"Pre-2000 sample: {GBR_df_pre_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_pre_2000.index.max().strftime('%Y-%m-%d')}"
+    )
+    print(
+        f"Post-1999 sample: {GBR_df_post_2000.index.min().strftime('%Y-%m-%d')} to {GBR_df_post_2000.index.max().strftime('%Y-%m-%d')}"
+    )
     print("\n--- Results Summary ---")
     print(GBR_results_df.to_string(float_format="%.3f"))
     return (GBR_results_df,)
@@ -1337,10 +1439,14 @@ def _(
 
     GBR_initial_lags_end = GBR_end_of_history
     GBR_initial_lags_start = GBR_end_of_history - pd.DateOffset(months=11)
-    GBR_initial_inf_lags = GBR_regression_df.loc[GBR_initial_lags_start:GBR_initial_lags_end, "Y"]
+    GBR_initial_inf_lags = GBR_regression_df.loc[
+        GBR_initial_lags_start:GBR_initial_lags_end, "Y"
+    ]
 
     # Set our unemployment assumption (constant at last value)
-    GBR_last_known_unemployment = GBR_regression_df.loc[GBR_end_of_history, "unemployment_rate_lag1"]
+    GBR_last_known_unemployment = GBR_regression_df.loc[
+        GBR_end_of_history, "unemployment_rate_lag1"
+    ]
 
     # Create the date range for the 12-month forecast
     GBR_forecast_dates = pd.date_range(
@@ -1356,7 +1462,9 @@ def _(
     for GBR_w_val2 in GBR_weights_on_prior:
         GBR_key = f"Bayesian (w={GBR_w_val2})"
 
-        GBR_coeffs_to_use = GBR_results_df.loc[GBR_key][['b(1) Coeff', 'a Coeff', 'const Coeff']].values
+        GBR_coeffs_to_use = GBR_results_df.loc[GBR_key][
+            ["b(1) Coeff", "a Coeff", "const Coeff"]
+        ].values
         GBR_fcst = iterative_forecast(
             GBR_coeffs_to_use, GBR_initial_inf_lags.values, GBR_unemployment_assumption
         )
@@ -1368,27 +1476,29 @@ def _(
 @app.cell
 def _(GBR_data, GBR_forecasts, GBR_initial_lags_end, np, pd, process_forecast):
     # Empty df to hold data
-    GBR_all_forecasts_df = pd.DataFrame(index=GBR_data.index[GBR_data.index > GBR_initial_lags_end])
+    GBR_all_forecasts_df = pd.DataFrame(
+        index=GBR_data.index[GBR_data.index > GBR_initial_lags_end]
+    )
 
     # Create the initial DataFrame with historical data
     GBR_base_df = pd.DataFrame(index=GBR_data.index)
-    GBR_base_df['core_cpi'] = GBR_data['core_cpi'].loc[:GBR_initial_lags_end]
-    GBR_base_df['core_cpi_log'] = np.log(GBR_base_df['core_cpi'])
-    GBR_base_df['delta_p'] = GBR_base_df['core_cpi_log'].diff(1) * 100
-    GBR_base_df['delta_p_fcst'] = GBR_base_df['delta_p']
+    GBR_base_df["core_cpi"] = GBR_data["core_cpi"].loc[:GBR_initial_lags_end]
+    GBR_base_df["core_cpi_log"] = np.log(GBR_base_df["core_cpi"])
+    GBR_base_df["delta_p"] = GBR_base_df["core_cpi_log"].diff(1) * 100
+    GBR_base_df["delta_p_fcst"] = GBR_base_df["delta_p"]
 
     # Fill in the rebased forecasts using the base data
     for GBR_bayes_key in GBR_forecasts:
         GBR_rebased_series = process_forecast(
-            GBR_forecasts[GBR_bayes_key], 
-            GBR_base_df,
-            GBR_initial_lags_end
+            GBR_forecasts[GBR_bayes_key], GBR_base_df, GBR_initial_lags_end
         )
         GBR_all_forecasts_df[GBR_bayes_key] = GBR_rebased_series
 
-    GBR_historical_data_for_plot = GBR_data['core_cpi'].loc[
-        pd.Timestamp("2018-01-01"):GBR_initial_lags_end
-    ].diff(12)
+    GBR_historical_data_for_plot = (
+        GBR_data["core_cpi"]
+        .loc[pd.Timestamp("2018-01-01") : GBR_initial_lags_end]
+        .diff(12)
+    )
 
     GBR_historical_data_for_plot.name = "core_cpi_12m"
     return GBR_all_forecasts_df, GBR_historical_data_for_plot
@@ -1409,8 +1519,8 @@ def _(
         go.Scatter(
             x=GBR_historical_data_for_plot.index,
             y=GBR_historical_data_for_plot.values,
-            name='Historical Data',
-            mode='lines',
+            name="Historical Data",
+            mode="lines",
         )
     )
 
@@ -1426,7 +1536,7 @@ def _(
             )
         )
 
-    # 3. Update layout
+        # 3. Update layout
         GBR_fig_fcts.update_layout(
             title=dict(
                 text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
@@ -1448,7 +1558,7 @@ def _(
         )
 
     GBR_fig_fcts.add_vrect(
-        x0=initial_lags_end+pd.DateOffset(months=1),
+        x0=initial_lags_end + pd.DateOffset(months=1),
         x1=max(GBR_all_forecasts_df[s].index[-1] for s in GBR_all_forecasts_df.columns),
         # x1=pd.Timestamp("2023-01-01"),
         annotation_text="Forecast Period",
