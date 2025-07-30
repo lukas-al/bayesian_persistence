@@ -1,0 +1,5 @@
+---
+description: When creating and editing marimo notebooks, make sure that we don't redefine variables from other cells. marimo requires that each variable is defined in just one cell. This constraint enables reactive and reproducible execution, arbitrary cell reordering, seamless UI elements, execution as a script, and more. Try merging the cell with the mentioned cells or wrapping it in a function. Alternatively, rename variables to make them private to this cell by prefixing them with an underscore.
+globs: *.mo,*.py
+alwaysApply: false
+---

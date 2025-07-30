@@ -1339,10 +1339,7 @@ def _(
 
 @app.cell
 def _(GBR_regression_df, mo, px):
-    mo.vstack([
-        mo.md("### Post seasonal adjustment"),
-        px.line(GBR_regression_df)
-    ])
+    mo.vstack([mo.md("### Post seasonal adjustment"), px.line(GBR_regression_df)])
     return
 
 
