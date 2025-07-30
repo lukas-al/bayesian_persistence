@@ -13,5 +13,6 @@ dependencies = [
     "plotly>=6.1.1",
     "scikit-learn>=1.7.1",
     "statsmodels>=0.14.4",
+    "tqdm>=4.67.1",
     "watchdog>=6.0.0",
 ]

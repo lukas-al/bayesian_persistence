@@ -271,6 +271,7 @@ def _(result, sm):
 
             print("✓ Successfully applied STL seasonal adjustment")
             return seasadj, seasonal, "STL"
+
     return (try_seasonal_adjustment,)
 
 
@@ -320,7 +321,8 @@ def _(pd):
 
     uk_data = pd.merge(cpi_uk, unemp_uk, how="inner", left_index=True, right_index=True)
     uk_data.rename(
-        columns={"OBS_VALUE": "core_cpi", "Value": "unemployment_rate"}, inplace=True
+        columns={"OBS_VALUE": "core_cpi", "Value": "unemployment_rate"},
+        inplace=True,
     )
 
     print(f"UK data loaded: {len(uk_data)} observations")
@@ -422,7 +424,6 @@ def _(pd):
     # UK-specific dates (start later due to data availability)
     uk_first_date = pd.Timestamp("1971-02-01")
     uk_last_date = pd.Timestamp("2019-12-31")
-
     return first_date, last_date, post_2000_start, pre_2000_end
 
 
@@ -443,7 +444,6 @@ def _(prepare_basic_data, uk_data, us_data):
     uk_clean = prepare_basic_data(uk_data)
     print(f"\nUK data prepared: {len(uk_clean)} observations")
     print(f"Date range: {uk_clean.index.min()} to {uk_clean.index.max()}")
-
     return uk_clean, us_clean
 
 
@@ -656,7 +656,6 @@ def _(
             summary_df,
         ]
     )
-
     return
 
 
@@ -697,7 +696,6 @@ def _():
         print(f"  Formula: {si['formula']}")
         print(f"  Description: {si['description']}")
         print(f"  Reference: {si['kiley_ref']}")
-
     return (phillips_curve_specs,)
 
 
@@ -773,7 +771,6 @@ def _(
             print(f"  Pre-2000: {len(_df_pre_2000)} observations")
             print(f"  Post-2000: {len(_df_post_2000)} observations")
             print(f"  Columns: {_df_reg.columns.tolist()}")
-
     return (design_matrices,)
 
 
@@ -940,7 +937,6 @@ def _(design_matrices, run_bayesian_estimation, run_ols_formula):
     print(f"\n{'=' * 60}")
     print("ESTIMATION COMPLETED")
     print(f"{'=' * 60}")
-
     return (regression_results,)
 
 
@@ -1061,7 +1057,6 @@ def _(mo, pd, phillips_curve_specs, regression_results):
             _items.append(mo.md("-" * 40))
 
     mo.vstack(_items)
-
     return
 
 
@@ -1156,13 +1151,7 @@ def _(
         all_forecasts[_country_name] = country_forecasts
 
         print(f"  Created {len(country_forecasts)} forecasts for {_country_name}")
-
     return (all_forecasts,)
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell
@@ -1247,7 +1236,6 @@ def _(all_forecasts, go, pd, uk_clean_sa, us_clean):
             fig.show()
         else:
             print(f"No forecasts available for {_country_name}")
-
     return
 
 
@@ -1269,6 +1257,493 @@ def _(mo):
     We need to be able to get this to work, the entire estimation process, etc, as a single series of steps which we can loop over as we go through time, and for different input datasets (countries) and specifications (formulae).
     """
     )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ## Functions
+    Was importing them previously, but will stick them here since I thinkn we might have been getting some deep bug
+    """
+    )
+    return
+
+
+@app.cell
+def _(deque, mo, np, patsy, pd, scipy_inv, sm):
+    """
+    This module contains functions for running an out-of-sample forecasting exercise
+    for the Bayesian policymaker model.
+    """
+
+    def oos_exercise_calculate_rmse(forecast, actual):
+        """
+        Calculates the Root Mean Squared Error (RMSE) between forecast and actual values.
+        """
+        # Ensure alignment and drop NaNs
+        combined = pd.concat(
+            [forecast.rename("forecast"), actual.rename("actual")], axis=1
+        ).dropna()
+        if combined.empty:
+            return np.nan
+        return np.sqrt(((combined["forecast"] - combined["actual"]) ** 2).mean())
+
+    def oos_exercise_prepare_basic_data(
+        df_input, cpi_col_name="core_cpi", unemployment_col_name="unemployment_rate"
+    ):
+        """
+        Prepares the data for Phillips Curve estimation.
+        Calculates inflation, lagged unemployment, and creates dependent variable.
+        """
+        df = df_input.copy()
+        df = df.sort_index()
+
+        # Calculate Core CPI inflation: monthly log difference, as a percentage
+        df["core_cpi_log"] = np.log(df[cpi_col_name])
+        df["delta_p"] = df["core_cpi_log"].diff(1) * 100
+
+        # Create lagged unemployment rate: u(t-1)
+        df["unemployment_rate"] = df[unemployment_col_name]
+
+        return df
+
+    def oos_exercise_run_ols_formula(df_sample, y_col, x_cols):
+        """
+        Runs OLS regression and returns key statistics.
+        """
+        Y = df_sample[y_col]
+        X = df_sample[x_cols]
+        X = sm.add_constant(X, has_constant="skip", prepend=False)
+
+        model = sm.OLS(Y, X, hasconst=True)
+        results = model.fit()
+
+        return (
+            results.params,
+            results.bse,
+            results.cov_params(),
+            results.mse_resid,
+            X,
+            Y,
+            results.nobs,
+            results,
+        )
+
+    def oos_exercise_run_bayesian_estimation(
+        gamma_prior, V_prior, gamma_ls, X_post, sigma_sq_post, w
+    ):
+        """
+        Performs Bayesian estimation based on Equation 4 of Kiley (2023).
+        """
+        # Prior precision (V^-1)
+        inv_V_prior = scipy_inv(V_prior)
+
+        # Data precision (σ^-2 * X'X)
+        data_precision = (1 / sigma_sq_post) * (X_post.T @ X_post)
+
+        # Posterior variance-covariance matrix: (w*V^-1 + (1-w)*σ^-2*X'X)^-1
+        posterior_vcov = scipy_inv((w * inv_V_prior) + ((1 - w) * data_precision))
+
+        # Posterior mean
+        prior_component = w * inv_V_prior @ gamma_prior
+        data_component = (1 - w) * data_precision @ gamma_ls
+        posterior_mean = posterior_vcov @ (prior_component + data_component)
+
+        # Standard errors
+        posterior_std_errs = np.sqrt(np.diag(posterior_vcov))
+
+        return posterior_mean, posterior_std_errs
+
+    def oos_exercise_iterative_forecast(coeffs, initial_inf_lags, unemployment_lags):
+        """
+        Generates multi-step ahead forecasts for inflation.
+        """
+        num_lags = len(initial_inf_lags)
+        inflation_lags = deque(initial_inf_lags, maxlen=num_lags)
+        forecasts = {}
+
+        inf_coeff, unemp_coeff, const_coeff = coeffs
+
+        for date, u_lag in unemployment_lags.items():
+            avg_inf_lag = np.mean(inflation_lags)
+            forecast = (inf_coeff * avg_inf_lag) + (unemp_coeff * u_lag) + const_coeff
+
+            forecasts[date] = forecast
+            inflation_lags.append(forecast)
+
+        return pd.Series(forecasts, name="inflation_forecast")
+
+    def oos_exercise_process_forecast(forecast_series, base_df, initial_lags_end):
+        """
+        Processes a forecast series to convert back to level terms.
+        """
+        # Get historical CPI levels up to the forecast start date
+        cpi_history = base_df["core_cpi"].loc[:initial_lags_end].copy()
+
+        # Get the last known log CPI value to start the forecast from
+        last_log_cpi = np.log(cpi_history.iloc[-1])
+
+        # Convert forecasted monthly inflation rate (%) to log differences
+        log_diffs_fcst = forecast_series / 100
+
+        # Cumulatively sum the log differences and add to the last known log level
+        log_cpi_fcst = log_diffs_fcst.cumsum() + last_log_cpi
+
+        # Convert log-level forecast back to level forecast
+        cpi_fcst = np.exp(log_cpi_fcst)
+
+        # Combine historical and forecasted CPI levels
+        full_cpi_series = pd.concat([cpi_history, cpi_fcst])
+        full_cpi_series.name = "core_cpi_fcst"
+
+        # Calculate 12-month percentage change
+        final_yoy_forecast = full_cpi_series.pct_change(12) * 100
+
+        return final_yoy_forecast.loc[final_yoy_forecast.index > initial_lags_end]
+
+    def run_oos_exercise(
+        data,
+        formula,
+        forecast_horizon,
+        oos_start_date,
+        oos_end_date,
+        prior_start_date,
+        prior_end_date,
+        weights,
+    ):
+        """
+        Main function to run the out-of-sample forecasting exercise.
+        """
+        oos_forecasts = {}
+        oos_rmses = {}
+
+        # Generate the date range for the OOS exercise
+        oos_dates = pd.date_range(start=oos_start_date, end=oos_end_date, freq="MS")
+
+        for t in mo.status.progress_bar(oos_dates):
+            # print(f"Running forecast for origin: {t.strftime('%Y-%m')}")
+
+            # 1. Prepare data for this iteration
+            historical_data = data.loc[:t]
+
+            # 2. Create design matrices
+            Y, X = patsy.dmatrices(
+                formula, data=historical_data, return_type="dataframe"
+            )
+            df_reg = pd.concat([Y, X.iloc[:, 1:]], axis=1).dropna()
+            df_reg["const"] = 1.0
+
+            y_col = Y.columns[0]
+            x_cols = X.columns[1:].tolist() + ["const"]
+
+            df_prior = df_reg.loc[prior_start_date:prior_end_date]
+            df_likelihood = df_reg.loc[prior_end_date:t]
+
+            # 3. Estimate prior and likelihood models
+            try:
+                (prior_coeffs, _, prior_vcov, _, _, _, _, _) = (
+                    oos_exercise_run_ols_formula(df_prior, y_col, x_cols)
+                )
+                (like_coeffs, _, _, like_sigma_sq, X_like, _, _, _) = (
+                    oos_exercise_run_ols_formula(df_likelihood, y_col, x_cols)
+                )
+            except Exception as e:
+                print(f"  Estimation failed for {t}: {e}")
+                continue
+
+            oos_forecasts[t] = {}
+            oos_rmses[t] = {}
+
+            # 4. Generate forecasts for each weight
+            for w in weights:
+                # print(f"  Calculating posterior for weight: {w}")
+                bayes_coeffs, _ = oos_exercise_run_bayesian_estimation(
+                    prior_coeffs.values,
+                    prior_vcov.values,
+                    like_coeffs.values,
+                    X_like.values,
+                    like_sigma_sq,
+                    w,
+                )
+
+                # Prepare for forecasting
+                initial_lags_end = t
+                initial_lags_start = t - pd.DateOffset(months=11)
+                initial_inf_lags = historical_data.loc[
+                    initial_lags_start:initial_lags_end, "delta_p"
+                ]
+
+                last_known_unemployment = historical_data.loc[t, "unemployment_rate"]
+                forecast_dates = pd.date_range(
+                    start=t, periods=forecast_horizon + 1, freq="MS"
+                )[1:]
+                unemployment_assumption = pd.Series(
+                    data=last_known_unemployment, index=forecast_dates
+                )
+
+                # Create base dataframe for processing forecasts
+                base_df = pd.DataFrame(index=data.index)
+                base_df["core_cpi"] = data["core_cpi"].loc[:initial_lags_end]
+                base_df["core_cpi_log"] = np.log(base_df["core_cpi"])
+
+                # Generate and process forecast
+                fcst_series = oos_exercise_iterative_forecast(
+                    bayes_coeffs, initial_inf_lags.values, unemployment_assumption
+                )
+                processed_fcst = oos_exercise_process_forecast(
+                    fcst_series, base_df, initial_lags_end
+                )
+
+                oos_forecasts[t][w] = processed_fcst
+
+                # 5. Calculate RMSE
+                actual_data = data["core_cpi"].pct_change(12) * 100
+                rmse = oos_exercise_calculate_rmse(processed_fcst, actual_data)
+                oos_rmses[t][w] = rmse
+
+        return oos_forecasts, oos_rmses
+
+    return (run_oos_exercise,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Run OOS exercise""")
+    return
+
+
+@app.cell
+def _(pd, phillips_curve_specs, run_oos_exercise, uk_clean_sa, us_clean):
+    # OOS Configuration
+    oos_config = {
+        "formula": phillips_curve_specs["main_spec"]["formula"],
+        "forecast_horizon": 12,
+        "oos_start_date": pd.to_datetime("2000-01-01"),
+        "oos_end_date": pd.to_datetime("2024-12-01"),
+        "prior_start_date": pd.to_datetime("1971-02-01"),
+        "prior_end_date": pd.to_datetime("1997-06-01"),
+        "weights": [w / 100 for w in range(0, 100, 1)],
+    }
+
+    # Run for US
+    us_oos_forecasts, us_oos_rmses = run_oos_exercise(data=us_clean, **oos_config)
+
+    # Run for UK
+    uk_oos_forecasts, uk_oos_rmses = run_oos_exercise(data=uk_clean_sa, **oos_config)
+    return (
+        oos_config,
+        uk_oos_forecasts,
+        uk_oos_rmses,
+        us_oos_forecasts,
+        us_oos_rmses,
+    )
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""## Killer charts""")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Visualize OOS RMSEs for each weight""")
+    return
+
+
+@app.cell
+def _(go, oos_config, pd, uk_oos_rmses, us_oos_rmses):
+    # Function to create RMSE plot
+    def create_rmse_plot(rmses, country_name):
+        fig = go.Figure()
+
+        for w in oos_config["weights"]:
+            rmse_series = pd.Series({t: rmses[t][w] for t in rmses if w in rmses[t]})
+            fig.add_trace(
+                go.Scatter(
+                    x=rmse_series.index,
+                    y=rmse_series.rolling(12).mean().values,
+                    name=f"w={w}",
+                    mode="lines",
+                )
+            )
+
+        fig.update_layout(
+            title=f"{country_name}: OOS RMSEs for Different Weights - 12 average",
+            xaxis_title="Forecast Origin",
+            yaxis_title="RMSE",
+            legend_title="Weight",
+        )
+        return fig
+
+    # Create plots
+    us_rmse_plot = create_rmse_plot(us_oos_rmses, "US")
+    us_rmse_plot.show()
+
+    uk_rmse_plot = create_rmse_plot(uk_oos_rmses, "UK")
+    uk_rmse_plot.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+    ### RMSE minimising W 
+    - The W which minimises RMSE through time - continuous scale -> KILLER CHART
+    """
+    )
+    return
+
+
+@app.cell
+def _(go, oos_config, pd, uk_oos_rmses, us_oos_rmses):
+    def best_weight_plot(rmses, country_name):
+        fig = go.Figure()
+        date_range = pd.date_range(
+            start=oos_config["oos_start_date"],
+            end=oos_config["oos_end_date"],
+            freq="MS",
+        )
+
+        best_weights = []
+        for date in date_range:
+            rmse_dict = rmses[date]
+            if rmse_dict:
+                best_w = min(rmse_dict, key=rmse_dict.get)
+                best_weights.append((date, best_w))
+            else:
+                best_weights.append((date, None))
+
+        dates, weights = zip(*best_weights)
+        best_weights_series = pd.Series(weights, index=dates)
+        best_weights_series.name = "best_weight"
+
+        fig.add_trace(
+            go.Scatter(
+                x=best_weights_series.rolling(12).mean().index,
+                y=best_weights_series.rolling(12).mean().values,
+                mode="lines",
+                name="Best Weight",
+            )
+        )
+
+        fig.update_layout(
+            title=f"{country_name}: Weight with Lowest OOS RMSE Over Time, 12m rolling average",
+            xaxis_title="Forecast Origin",
+            yaxis_title="Best Weight (w)",
+            legend_title="Legend",
+        )
+        return fig
+
+    us_best_w_plot = best_weight_plot(us_oos_rmses, "US")
+    us_best_w_plot.show()
+
+    uk_best_w_plot = best_weight_plot(uk_oos_rmses, "UK")
+    uk_best_w_plot.show()
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""### Distribution through time""")
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""### Forecasts at specified dates""")
+    return
+
+
+@app.cell
+def _(pd, us_oos_forecasts):
+    us_oos_forecasts[pd.Timestamp("2019-01-01")][0.0].values
+    return
+
+
+@app.cell
+def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
+    # Create a list of dates to view the forecast at
+    dates_to_view = [
+        pd.Timestamp("2019-01-01"),
+        pd.Timestamp("2021-01-01"),
+        pd.Timestamp("2022-01-01"),
+        pd.Timestamp("2023-01-01"),
+        pd.Timestamp("2024-01-01"),
+    ]
+
+    weights_to_view = [
+        0.0,
+        0.2,
+        0.5,
+        0.75,
+        0.9,
+        0.99,
+    ]
+
+    # Create a figure and plot the forecasts at each timestep
+    def create_hedgehog_plot(
+        oos_forecasts, dates_to_view, weights_to_view, data, historical_start
+    ):
+        fig = go.Figure()
+
+        for date in dates_to_view:
+            for w in weights_to_view:
+                fig.add_trace(
+                    go.Scatter(
+                        x=oos_forecasts[date][w].index,
+                        y=oos_forecasts[date][w].values,
+                        name=f"w={w}",
+                        mode="lines",
+                    )
+                )
+
+        # Add the true path
+        historical_data = data["core_cpi"].loc[historical_start:].pct_change(12) * 100
+        fig.add_trace(
+            go.Scatter(
+                x=historical_data.index,
+                y=historical_data.values,
+                name="True Path",
+                mode="lines",
+                line=dict(color="black", dash="dash"),
+            )
+        )
+        fig.update_layout(
+            title="Forecasts at Specified Dates",
+            xaxis_title="Date",
+            yaxis_title="Forecast",
+        )
+
+        return fig
+
+    us_hedgehog_plot = create_hedgehog_plot(
+        us_oos_forecasts,
+        dates_to_view,
+        weights_to_view,
+        us_clean,
+        pd.Timestamp("2018-01-01"),
+    )
+    us_hedgehog_plot.show()
+
+    uk_hedgehog_plot = create_hedgehog_plot(
+        uk_oos_forecasts,
+        dates_to_view,
+        weights_to_view,
+        uk_clean_sa,
+        pd.Timestamp("2018-01-01"),
+    )
+    uk_hedgehog_plot.show()
+
     return
 
 
