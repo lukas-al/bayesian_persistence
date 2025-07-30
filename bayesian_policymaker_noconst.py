@@ -25,10 +25,10 @@ def _():
 def _(mo):
     mo.md(
         r"""
-    # Bayesian Policy Maker
+    # Bayesian Policy Maker (No Constant)
     How much information should a policy maker take from pre-2000 inflation as regards persistence in the post-2000 era.
 
-    This note replicates the methdology outlined in [Kiley](https://www.ijcb.org/journal/ijcb24q1a6.pdf), extending it to UK data.
+    This note replicates the methdology outlined in [Kiley](https://www.ijcb.org/journal/ijcb24q1a6.pdf), extending it to UK data, but **without using a constant term** in the Phillips Curve estimation.
     """
     )
     return
@@ -89,11 +89,12 @@ def _(sm):
     ):
         """
         Runs OLS regression and returns key statistics.
-        Model: Y = b1*X1 + b2*X2 (no constant, as per paper's Equation 1)
+        Model: Y = b1*X1 + b2*X2 (NO constant term, as specified)
         """
         Y = df_sample[y_col]
         X = df_sample[x_cols]
-        X = sm.add_constant(X, has_constant="skip", prepend=False)
+        # Do NOT add constant for this version
+        # X = sm.add_constant(X, has_constant="skip", prepend=False)
 
         model = sm.OLS(Y, X)
         results = model.fit()
@@ -172,9 +173,10 @@ def _(deque, np, pd):
     def iterative_forecast(coeffs, initial_inf_lags, unemployment_lags):
         """
         Generates multi-step ahead forecasts for inflation as a pandas Series.
+        Modified for no constant term version.
 
         Args:
-            coeffs (pd.Series): Model coefficients.
+            coeffs (pd.Series): Model coefficients (no constant).
             initial_inf_lags (list or np.array): The 12 most recent actual inflation values.
             unemployment_lags (pd.Series): Assumed unemployment rates for the forecast horizon,
                                            with a DatetimeIndex.
@@ -186,11 +188,13 @@ def _(deque, np, pd):
         inflation_lags = deque(initial_inf_lags, maxlen=num_lags)
         forecasts = {}
 
-        inf_coeff, unemp_coeff, const_coeff = coeffs
+        inf_coeff, unemp_coeff = coeffs  # Only 2 coefficients, no constant
 
         for date, u_lag in unemployment_lags.items():
             avg_inf_lag = np.mean(inflation_lags)
-            forecast = (inf_coeff * avg_inf_lag) + (unemp_coeff * u_lag) + const_coeff
+            forecast = (inf_coeff * avg_inf_lag) + (
+                unemp_coeff * u_lag
+            )  # No constant term
 
             forecasts[date] = forecast
             inflation_lags.append(forecast)
@@ -506,8 +510,6 @@ def _(df_pre_2000, mo, results_summary, run_ols):
         "b(1) SE": prior_std_errs["avg_lag_inflation"],
         "a Coeff": prior_mean_coeffs["unemployment_rate_lag1"],
         "a SE": prior_std_errs["unemployment_rate_lag1"],
-        "const Coeff": prior_mean_coeffs["const"],
-        "const SE": prior_std_errs["const"],
         "N": prior_nobs,
     }
     # results_summary['OLS Pre-2000 (Prior)']
@@ -618,8 +620,6 @@ def _(
             "b(1) SE": bayes_std_errs[0],
             "a Coeff": bayes_coeffs[1],
             "a SE": bayes_std_errs[1],
-            "const Coeff": bayes_coeffs[2],
-            "const SE": bayes_std_errs[2],
             "N": post_nobs,
         }
 
@@ -647,11 +647,9 @@ def _(df_post_2000, df_pre_2000, first_date, last_date, pd, results_summary):
         "b(1) SE",
         "a Coeff",
         "a SE",
-        "const Coeff",
-        "const SE",
         "N",
     ]
-    # Add 'const Coeff' and 'const SE' to column_order if you uncomment their display
+    # No constant coefficients in this version
     results_df = results_df.reindex(columns=column_order)  # Use reindex for columns
 
     row_order = [
@@ -667,10 +665,10 @@ def _(df_post_2000, df_pre_2000, first_date, last_date, pd, results_summary):
     results_df = results_df.reindex(index=existing_row_order)  # Use reindex for rows
 
     print(
-        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)"
+        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model WITHOUT Constant)"
     )
     print(
-        "Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
+        "Model: delta_p(t) = b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
     )
 
     # ---
@@ -749,7 +747,7 @@ def _(iterative_forecast, pd, regression_df, results_df, weights_on_prior):
     for w_val2 in weights_on_prior:
         key = f"Bayesian (w={w_val2})"
         coeffs_to_use = results_df.loc[key][
-            ["b(1) Coeff", "a Coeff", "const Coeff"]
+            ["b(1) Coeff", "a Coeff"]  # No constant coefficient
         ].values
         fcst = iterative_forecast(
             coeffs_to_use, initial_inf_lags.values, unemployment_assumption
@@ -817,7 +815,7 @@ def _(all_forecasts_df, go, historical_data_for_plot, initial_lags_end, pd):
         # 3. Update layout
         fig_fcts.update_layout(
             title=dict(
-                text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
+                text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker (No Constant)</b>",
                 x=0.5,
                 font=dict(size=22, family="Times New Roman"),
             ),
@@ -857,7 +855,7 @@ def _(mo):
         r"""
     # UK Version
 
-    Replicate the same - but for the US
+    Replicate the same - but for the UK
     """
     )
     return
@@ -994,20 +992,48 @@ def _(mo):
     mo.md(
         r"""
     ### Seasonally adjust CPI
-
+    
     We now use sophisticated seasonal adjustment methods in this order of preference:
     1. **X13-ARIMA-SEATS** (gold standard used by statistical agencies)
     2. **STL decomposition** (robust loess-based method)
     3. **Simple additive decomposition** (fallback)
-
-    To use X13-ARIMA-SEATS, you need to install the X13 binary. The code will automatically detect if X13 is available and fall back gracefully if not.
+    
+    #### Setting up X13-ARIMA-SEATS (Optional but Recommended)
+    
+    To use X13-ARIMA-SEATS, you need to install the X13 binary:
+    
+    **macOS (via Homebrew):**
+    ```bash
+    brew install x13as
+    ```
+    
+    **Windows:**
+    - Download from [U.S. Census Bureau](https://www.census.gov/data/software/x13as.html)
+    - Add to your PATH
+    
+    **Linux:**
+    ```bash
+    # Ubuntu/Debian
+    sudo apt-get install x13as
+    
+    # Or download from Census Bureau and compile
+    ```
+    
+    **Python Configuration:**
+    ```python
+    # If X13 is not in PATH, specify location:
+    import statsmodels.api as sm
+    sm.tsa.x13_path = "/path/to/x13as"
+    ```
+    
+    The code will automatically detect if X13 is available and fall back gracefully if not.
     """
     )
     return
 
 
 @app.cell
-def _(GBR_regression_df, plt, sm):
+def _(GBR_regression_df, plt, sm, pd):
     def try_x13_seasonal_adjustment(series, freq="M"):
         """
         Attempts X13-ARIMA-SEATS seasonal adjustment with fallback to STL.
@@ -1187,12 +1213,12 @@ def _(GBR_regression_df, plt, sm):
     print("\nSeasonal Component Summary:")
     print(aligned_seasonal.describe())
 
-    # print("\nMonthly Seasonal Patterns:")
-    # monthly_pattern = aligned_seasonal.groupby(aligned_seasonal.index.month).mean()
-    # for month, effect in zip(months, monthly_pattern.values):
-    #     print(f"  {month}: {effect:+.3f}")
+    print("\nMonthly Seasonal Patterns:")
+    monthly_pattern = aligned_seasonal.groupby(aligned_seasonal.index.month).mean()
+    for month, effect in zip(months, monthly_pattern.values):
+        print(f"  {month}: {effect:+.3f}")
 
-    return
+    return method_used, aligned_seasonal
 
 
 @app.cell(hide_code=True)
@@ -1338,15 +1364,6 @@ def _(
 
 
 @app.cell
-def _(GBR_regression_df, mo, px):
-    mo.vstack([
-        mo.md("### Post seasonal adjustment"),
-        px.line(GBR_regression_df)
-    ])
-    return
-
-
-@app.cell
 def _(mo):
     mo.md(r"""## Perform Least Squares Regression""")
     return
@@ -1391,8 +1408,6 @@ def _(GBR_df_pre_2000, GBR_results_summary, mo, run_ols):
         "b(1) SE": GBR_prior_std_errs["avg_lag_inflation"],
         "a Coeff": GBR_prior_mean_coeffs["unemployment_rate_lag1"],
         "a SE": GBR_prior_std_errs["unemployment_rate_lag1"],
-        "const Coeff": GBR_prior_mean_coeffs["const"],
-        "const SE": GBR_prior_mean_coeffs["const"],
         "N": GBR_prior_nobs,
     }
     # GBR_results_summary['OLS Pre-2000 (Prior)']
@@ -1508,8 +1523,6 @@ def _(
             "b(1) SE": GBR_bayes_std_errs[0],
             "a Coeff": GBR_bayes_coeffs[1],
             "a SE": GBR_bayes_std_errs[1],
-            "const Coeff": GBR_bayes_coeffs[2],
-            "const SE": GBR_bayes_std_errs[2],
             "N": GBR_post_nobs,
         }
     return (GBR_weights_on_prior,)
@@ -1545,11 +1558,9 @@ def _(
         "b(1) SE",
         "a Coeff",
         "a SE",
-        "const Coeff",
-        "const SE",
         "N",
     ]
-    # Add 'const Coeff' and 'const SE' to column_order if you uncomment their display
+    # No constant coefficients in this version
     GBR_results_df = GBR_results_df.reindex(
         columns=column_order
     )  # Use reindex for columns
@@ -1569,10 +1580,10 @@ def _(
     )  # Use reindex for rows
 
     print(
-        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model with Constant)"
+        "Estimated Phillips Curve Coefficients and Standard Errors (Monthly Data Model WITHOUT Constant)"
     )
     print(
-        "Model: delta_p(t) = const + b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
+        "Model: delta_p(t) = b(1)*avg_lag_inflation(t) + a*unemployment_rate_lag1(t) + e(t)"
     )
 
     # ---
@@ -1635,7 +1646,7 @@ def _(
         GBR_key = f"Bayesian (w={GBR_w_val2})"
 
         GBR_coeffs_to_use = GBR_results_df.loc[GBR_key][
-            ["b(1) Coeff", "a Coeff", "const Coeff"]
+            ["b(1) Coeff", "a Coeff"]  # No constant coefficient
         ].values
         GBR_fcst = iterative_forecast(
             GBR_coeffs_to_use, GBR_initial_inf_lags.values, GBR_unemployment_assumption
@@ -1680,8 +1691,8 @@ def _(GBR_data, GBR_forecasts, GBR_initial_lags_end, np, pd, process_forecast):
 def _(
     GBR_all_forecasts_df,
     GBR_historical_data_for_plot,
+    GBR_initial_lags_end,
     go,
-    initial_lags_end,
     pd,
 ):
     GBR_fig_fcts = go.Figure()
@@ -1711,7 +1722,7 @@ def _(
         # 3. Update layout
         GBR_fig_fcts.update_layout(
             title=dict(
-                text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
+                text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker (No Constant)</b>",
                 x=0.5,
                 font=dict(size=22, family="Times New Roman"),
             ),
@@ -1730,7 +1741,7 @@ def _(
         )
 
     GBR_fig_fcts.add_vrect(
-        x0=initial_lags_end + pd.DateOffset(months=1),
+        x0=GBR_initial_lags_end + pd.DateOffset(months=1),
         x1=max(GBR_all_forecasts_df[s].index[-1] for s in GBR_all_forecasts_df.columns),
         # x1=pd.Timestamp("2023-01-01"),
         annotation_text="Forecast Period",
@@ -1741,80 +1752,6 @@ def _(
     )
 
     GBR_fig_fcts.show()
-    return
-
-
-@app.cell
-def _(GBR_data):
-    GBR_data["core_cpi"]
-    return
-
-
-@app.cell
-def _(GBR_all_forecasts_df, GBR_data, go, initial_lags_end, pd):
-    def _():
-        GBR_fig_fcts = go.Figure()
-
-        GBR_realised = GBR_data["core_cpi"].loc[pd.Timestamp("2018-01-01") :].diff(12)
-
-        # 1. Add historical data
-        GBR_fig_fcts.add_trace(
-            go.Scatter(
-                x=GBR_realised.index,
-                y=GBR_realised.values,
-                name="Historical Data",
-                mode="lines",
-            )
-        )
-
-        # 2. Add trace for each forecast_series
-        for GBR_col_name in GBR_all_forecasts_df.columns:
-            GBR_fig_fcts.add_trace(
-                go.Scatter(
-                    x=GBR_all_forecasts_df.index,
-                    y=GBR_all_forecasts_df[GBR_col_name].values,
-                    name=GBR_col_name,
-                    mode="lines",
-                    line=dict(width=2.5, dash="dot"),
-                )
-            )
-
-            # 3. Update layout
-            GBR_fig_fcts.update_layout(
-                title=dict(
-                    text="<b> Forecast for Core CPI Inflation using estimated Phillips curve by Bayesian Policymaker</b>",
-                    x=0.5,
-                    font=dict(size=22, family="Times New Roman"),
-                ),
-                yaxis_title="Year-over-Year Percent Change",
-                yaxis_ticksuffix="%",
-                template="plotly_white",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.0,
-                    xanchor="right",
-                    x=1,
-                    font=dict(size=12, family="Times New Roman"),
-                ),
-                hovermode="x unified",
-            )
-
-        GBR_fig_fcts.add_vrect(
-            x0=initial_lags_end + pd.DateOffset(months=1),
-            x1=max(
-                GBR_all_forecasts_df[s].index[-1] for s in GBR_all_forecasts_df.columns
-            ),
-            # x1=pd.Timestamp("2023-01-01"),
-            annotation_text="Forecast Period",
-            annotation_position="top right",
-            fillcolor="green",
-            opacity=0.1,
-            line_width=0,
-        )
-        return GBR_fig_fcts.show()
-
-    _()
     return
 
 
