@@ -35,11 +35,12 @@ def _():
     import pandas as pd
     import patsy
     import plotly.graph_objects as go
+    import plotly.express as px
     import statsmodels.api as sm
     from plotly.subplots import make_subplots
     from scipy.linalg import inv as scipy_inv
 
-    return deque, go, make_subplots, mo, np, patsy, pd, plt, scipy_inv, sm
+    return deque, go, make_subplots, mo, np, patsy, pd, plt, px, scipy_inv, sm
 
 
 @app.cell
@@ -1426,7 +1427,7 @@ def _(deque, mo, np, patsy, pd, scipy_inv, sm):
             # print(f"Running forecast for origin: {t.strftime('%Y-%m')}")
 
             # 1. Prepare data for this iteration
-            historical_data = data.loc[:t]
+            historical_data = data.loc[:t].copy()
 
             # 2. Create design matrices
             Y, X = patsy.dmatrices(
@@ -1470,6 +1471,7 @@ def _(deque, mo, np, patsy, pd, scipy_inv, sm):
 
                 # Prepare for forecasting
                 initial_lags_end = t
+                # start forecast from realisation pd.DateOffset(months=11)
                 initial_lags_start = t - pd.DateOffset(months=11)
                 initial_inf_lags = historical_data.loc[
                     initial_lags_start:initial_lags_end, "delta_p"
@@ -1478,7 +1480,7 @@ def _(deque, mo, np, patsy, pd, scipy_inv, sm):
                 last_known_unemployment = historical_data.loc[t, "unemployment_rate"]
                 forecast_dates = pd.date_range(
                     start=t, periods=forecast_horizon + 1, freq="MS"
-                )[1:]
+                ) # [1:] - start forecast from realisation
                 unemployment_assumption = pd.Series(
                     data=last_known_unemployment, index=forecast_dates
                 )
@@ -1520,11 +1522,11 @@ def _(pd, phillips_curve_specs, run_oos_exercise, uk_clean_sa, us_clean):
     oos_config = {
         "formula": phillips_curve_specs["main_spec"]["formula"],
         "forecast_horizon": 12,
-        "oos_start_date": pd.to_datetime("2000-01-01"),
+        "oos_start_date": pd.to_datetime("2010-01-01"),
         "oos_end_date": pd.to_datetime("2024-12-01"),
         "prior_start_date": pd.to_datetime("1971-02-01"),
         "prior_end_date": pd.to_datetime("1997-06-01"),
-        "weights": [w / 100 for w in range(0, 100, 1)],
+        "weights": [w / 100 for w in range(0, 100, 10)],
     }
 
     # Run for US
@@ -1539,6 +1541,12 @@ def _(pd, phillips_curve_specs, run_oos_exercise, uk_clean_sa, us_clean):
         us_oos_forecasts,
         us_oos_rmses,
     )
+
+
+@app.cell
+def _(pd, uk_oos_forecasts):
+    uk_oos_forecasts[pd.Timestamp("2020-01-01")][0.0]
+    return
 
 
 @app.cell
@@ -1665,13 +1673,16 @@ def _(mo):
 
 
 @app.cell
-def _(pd, us_oos_forecasts):
-    us_oos_forecasts[pd.Timestamp("2019-01-01")][0.0].values
-    return
-
-
-@app.cell
-def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
+def _(
+    go,
+    np,
+    pd,
+    px,
+    uk_clean_sa,
+    uk_oos_forecasts,
+    us_clean,
+    us_oos_forecasts,
+):
     # Create a list of dates to view the forecast at
     dates_to_view = [
         pd.Timestamp("2019-01-01"),
@@ -1685,9 +1696,8 @@ def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
         0.0,
         0.2,
         0.5,
-        0.75,
+        0.7,
         0.9,
-        0.99,
     ]
 
     # Create a figure and plot the forecasts at each timestep
@@ -1696,14 +1706,36 @@ def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
     ):
         fig = go.Figure()
 
+        # 1. Generate a color map based on the weights.
+        # To ensure the gradient is meaningful, sort the weights first.
+        sorted_weights = sorted(weights_to_view)
+        n_weights = len(sorted_weights)
+
+        if n_weights > 1:
+            colors = px.colors.sample_colorscale("Turbo", np.linspace(0, 1, n_weights))
+        elif n_weights == 1:
+            colors = px.colors.sample_colorscale("Turbo", [0.5])
+        else:
+            colors = []
+
+        # Map each weight to a color 🎨
+        weight_to_color = {w: color for w, color in zip(sorted_weights, colors)}
+
+        # 2. Loop through dates and then weights, applying the color map
         for date in dates_to_view:
             for w in weights_to_view:
                 fig.add_trace(
                     go.Scatter(
                         x=oos_forecasts[date][w].index,
                         y=oos_forecasts[date][w].values,
-                        name=f"w={w}",
+                        hovertemplate="value: %{y:.2f}"
+                        + "<br>"
+                        + f"w: {w}"
+                        + "<br>"
+                        + f"Forecast date: {date.strftime('%Y-%m')}",
                         mode="lines",
+                        # Apply the color based on the weight 'w'
+                        line=dict(color=weight_to_color[w]),
                     )
                 )
 
@@ -1719,9 +1751,11 @@ def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
             )
         )
         fig.update_layout(
-            title="Forecasts at Specified Dates",
+            title="Forecasts at Specified Dates (Colored by Weight)",
             xaxis_title="Date",
             yaxis_title="Forecast",
+            showlegend=False,
+            hovermode="x",
         )
 
         return fig
@@ -1731,7 +1765,10 @@ def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
         dates_to_view,
         weights_to_view,
         us_clean,
-        pd.Timestamp("2018-01-01"),
+        pd.Timestamp("2017-01-01"),
+    )
+    us_hedgehog_plot.update_layout(
+        title="US Forecasts at Specified Dates",
     )
     us_hedgehog_plot.show()
 
@@ -1740,10 +1777,12 @@ def _(go, pd, uk_clean_sa, uk_oos_forecasts, us_clean, us_oos_forecasts):
         dates_to_view,
         weights_to_view,
         uk_clean_sa,
-        pd.Timestamp("2018-01-01"),
+        pd.Timestamp("2017-01-01"),
+    )
+    uk_hedgehog_plot.update_layout(
+        title="UK Forecasts at Specified Dates",
     )
     uk_hedgehog_plot.show()
-
     return
 
 
